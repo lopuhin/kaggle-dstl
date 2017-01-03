@@ -41,8 +41,9 @@ def load_image(im_id: str) -> np.ndarray:
     return tifffile.imread('./three_band/{}.tif'.format(im_id))
 
 
-def load_polygons(im_id: str, im_data: np.ndarray) -> Dict[int, MultiPolygon]:
-    _, w, h = im_data.shape
+def load_polygons(im_id: str, im_size: Tuple[int, int])\
+        -> Dict[int, MultiPolygon]:
+    w, h = im_size
     w_ = w * (w / (w + 1))
     h_ = h * (h / (h + 1))
 
