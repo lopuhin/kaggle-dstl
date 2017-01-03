@@ -1,0 +1,10 @@
+attrs==16.3.0
+descartes==1.0.2
+matplotlib==1.5.3
+numpy==1.11.3
+opencv-python==3.1.0.3
+protobuf==3.1.0
+Shapely==1.5.17.post1
+scikit-learn==0.18.1
+# tensorflow==0.12.0
+tifffile==0.10.0
