@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+from collections import defaultdict
 import logging
 import random
 import time
@@ -25,6 +26,7 @@ logger.addHandler(ch)
 class HyperParams:
     n_channels = attr.ib(default=3)
     n_classes = attr.ib(default=10)
+    thresholds = attr.ib(default=[0.08, 0.1, 0.12, 0.3, 0.5])
 
     patch_inner = attr.ib(default=16)
     patch_border = attr.ib(default=8)
@@ -64,12 +66,13 @@ class Model:
         w1 = tf.get_variable('w1', shape=[hidden_dim, output_dim])
         b1 = tf.get_variable('b1', shape=[output_dim],
                              initializer=tf.zeros_initializer)
-        x_logits = tf.nn.xw_plus_b(x_hidden, w1, b1)
+        x_logits = tf.reshape(
+            tf.nn.xw_plus_b(x_hidden, w1, b1),
+            [-1, hps.patch_inner, hps.patch_inner, hps.n_classes])
         self.x_out = tf.nn.sigmoid(x_logits)
 
         self.loss = tf.reduce_mean(
-            tf.nn.sigmoid_cross_entropy_with_logits(
-                x_logits, tf.reshape(self.y, [-1, output_dim])))
+            tf.nn.sigmoid_cross_entropy_with_logits(x_logits, self.y))
         tf.summary.scalar('loss', self.loss)
         self.global_step = tf.Variable(0, name='global_step', trainable=False)
         optimizer = tf.train.AdamOptimizer(learning_rate=hps.learning_rate)
@@ -122,6 +125,7 @@ class Model:
                      for x, y in patch_coords])
                 outputs = np.array(
                     [masks[x: x + s, y: y + s, :] for x, y in patch_coords])
+                # import IPython; IPython.embed()
                 yield {self.x: inputs, self.y: outputs}
 
         self._train_on_feeds(feeds(), sv, sess)
@@ -129,25 +133,53 @@ class Model:
     def _train_on_feeds(self, feed_dicts: Iterable[Dict],
                         sv: tf.train.Supervisor, sess: tf.Session):
         losses = []
+        tp_fp_fn = {threshold: [defaultdict(list) for _ in range(3)]
+                    for threshold in self.hps.thresholds}
         t0 = t00 = time.time()
         for i, feed_dict in enumerate(feed_dicts):
-            fetches = {'loss': self.loss, 'train': self.train_op}
+            fetches = {
+                'loss': self.loss, 'train': self.train_op, 'pred': self.x_out}
             if i % 10 == 0:
                 fetches['summary'] = self.summary_op
             fetched = sess.run(fetches, feed_dict)
             losses.append(fetched['loss'])
             if 'summary' in fetched:
                 sv.summary_computed(sess, fetched['summary'])
+            self._update_jaccard(tp_fp_fn, feed_dict[self.y], fetched['pred'])
             t1 = time.time()
             dt = t1 - t0
-            if dt > 60 or (t1 - t00 < 60 and dt > 5):
-                logger.info('Loss: {:.3f}, speed: {:,} patches/s'.format(
-                    np.mean(losses),
-                    int(len(losses) * self.hps.batch_size / dt)))
+            if dt > 30 or (t1 - t00 < 30 and dt > 5):
+                logger.info(
+                    'Loss: {loss:.3f}, speed: {speed:,} patches/s, '
+                    'Jaccard: {jaccard}'.format(
+                        loss=np.mean(losses),
+                        speed=int(len(losses) * self.hps.batch_size / dt),
+                        jaccard=', '.join(
+                            'at {:.2f}: {:.3f}'.format(
+                                threshold, self._jaccard(tp, fp, fn))
+                            for threshold, (tp, fp, fn)
+                            in sorted(tp_fp_fn.items()))
+                    ))
                 losses = []
+                for for_threshold in tp_fp_fn.values():
+                    for dct in for_threshold:
+                        dct.clear()
                 t0 = t1
 
+    def _update_jaccard(self, tp_fp_fn, mask, pred):
+        for threshold, (tp, fp, fn) in tp_fp_fn.items():
+            for cls in range(self.hps.n_classes):
+                pred_ = pred[:, :, cls]
+                mask_ = mask[:, :, cls]
+                tp[cls].append(((pred_ >= threshold) * (mask_ == 1)).sum())
+                fp[cls].append(((pred_ >= threshold) * (mask_ == 0)).sum())
+                fn[cls].append(((pred_ <  threshold) * (mask_ == 1)).sum())
 
+    def _jaccard(self, tp, fp, fn):
+        jaccards = [
+            sum(tp[cls]) / (sum(tp[cls]) + sum(fn[cls]) + sum(fp[cls]))
+            for cls in range(self.hps.n_classes)]
+        return np.mean(jaccards)
 
 
 def main():
