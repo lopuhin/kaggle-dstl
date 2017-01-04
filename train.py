@@ -78,7 +78,7 @@ class Model:
             tf.nn.xw_plus_b(x_hidden, w1, b1),
             [-1, hps.patch_inner, hps.patch_inner, hps.n_classes])
         self.pred = tf.nn.sigmoid(x_logits)
-
+        self.add_image_summaries()
         self.loss = tf.reduce_mean(
             tf.nn.sigmoid_cross_entropy_with_logits(x_logits, self.y))
         tf.summary.scalar('loss', self.loss)
@@ -87,6 +87,14 @@ class Model:
         self.train_op = optimizer.minimize(
             self.loss * hps.batch_size, self.global_step)
         self.summary_op = tf.summary.merge_all()
+
+    def add_image_summaries(self):
+        images = [self.x]
+        for cls in range(self.hps.n_classes):
+            images.append(
+                tf.concat(1, [tf.pack(3 * [im[:, :, :, cls]], axis=3)
+                              for im in [self.y, self.pred]]))
+        tf.summary.image('image', tf.concat(2, images), max_outputs=16)
 
     def train(self, logdir: str, im_ids: List[str]):
         im_ids = sorted(im_ids)
@@ -100,6 +108,7 @@ class Model:
         )
         with sv.managed_session() as sess:
             for n_epoch in range(self.hps.n_epochs):
+                logger.info('Epoch {}'.format(n_epoch))
                 self.train_on_images(train_images, sv, sess)
 
     def load_image(self, im_id: str) -> Image:
@@ -130,10 +139,10 @@ class Model:
         s = self.hps.patch_inner
         avg_area = np.mean(
             [im.data.shape[0] * im.data.shape[1] for im in train_images])
-        n_iter = int(avg_area / (s + b))
+        n_batches = int(avg_area / (s + b) / self.hps.batch_size)
 
         def feeds():
-            for i in range(n_iter):
+            for _ in range(n_batches):
                 inputs, outputs = [], []
                 for _ in range(self.hps.batch_size):
                     im = random.choice(train_images)
@@ -146,7 +155,6 @@ class Model:
                 # import IPython; IPython.embed()
                 yield {self.x: np.array(inputs), self.y: np.array(outputs)}
 
-        logger.info('Starting training')
         self._train_on_feeds(feeds(), sv, sess)
 
     def _train_on_feeds(self, feed_dicts: Iterable[Dict],
