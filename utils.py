@@ -5,7 +5,7 @@ import sys
 
 import cv2
 import numpy as np
-import tifffile
+import tifffile as tiff
 from shapely.geometry import MultiPolygon
 import shapely.wkt
 import shapely.affinity
@@ -38,7 +38,7 @@ def get_wkt_data() -> Dict[str, Dict[int, str]]:
 
 
 def load_image(im_id: str) -> np.ndarray:
-    return tifffile.imread('./three_band/{}.tif'.format(im_id))
+    return tiff.imread('./three_band/{}.tif'.format(im_id)).transpose([1, 2, 0])
 
 
 def load_polygons(im_id: str, im_size: Tuple[int, int])\
@@ -74,3 +74,24 @@ def mask_for_polygons(
     cv2.fillPoly(img_mask, exteriors, 1)
     cv2.fillPoly(img_mask, interiors, 0)
     return img_mask
+
+
+def scale_percentile(matrix: np.ndarray) -> np.ndarray:
+    """ Fixes the pixel value range to 2%-98% original distribution of values.
+    """
+    w, h, d = matrix.shape
+    matrix = np.reshape(matrix, [w * h, d]).astype(np.float64)
+
+    # Get 2nd and 98th percentile
+    mins = np.percentile(matrix, 1, axis=0)
+    maxs = np.percentile(matrix, 99, axis=0) - mins
+
+    matrix = (matrix - mins[None, :]) / maxs[None, :]
+    matrix = np.reshape(matrix, [w, h, d])
+    matrix = matrix.clip(0, 1)
+    return matrix
+
+
+def chunks(lst, n):
+    for i in range(0, len(lst), n):
+        yield lst[i: i + n]
