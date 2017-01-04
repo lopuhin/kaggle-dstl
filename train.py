@@ -29,8 +29,8 @@ class HyperParams:
     n_classes = attr.ib(default=10)
     thresholds = attr.ib(default=[0.08, 0.1, 0.12, 0.3, 0.5])
 
-    patch_inner = attr.ib(default=16)
-    patch_border = attr.ib(default=8)
+    patch_inner = attr.ib(default=32)
+    patch_border = attr.ib(default=16)
 
     n_epochs = attr.ib(default=10)
     learning_rate = attr.ib(default=0.1)
@@ -89,12 +89,23 @@ class Model:
         self.summary_op = tf.summary.merge_all()
 
     def add_image_summaries(self):
-        images = [self.x]
+        b = self.hps.patch_border
+        s = self.hps.patch_inner
+        border = np.zeros([b * 2 + s, b * 2 + s, 3], dtype=np.float32)
+        border[ b, b:-b, 0] = border[-b, b:-b, 0] = 1
+        border[b:-b,  b, 0] = border[b:-b, -b, 0] = 1
+        border[-b, -b, 0] = 1
+        border_t = tf.pack(self.hps.batch_size * [tf.constant(border)])
+        images = [tf.maximum(self.x, border_t)]
+        mark = np.zeros([s, s], dtype=np.float32)
+        mark[0, 0] = 1
+        mark_t = tf.pack(self.hps.batch_size * [tf.constant(mark)])
         for cls in range(self.hps.n_classes):
             images.append(
-                tf.concat(1, [tf.pack(3 * [im[:, :, :, cls]], axis=3)
-                              for im in [self.y, self.pred]]))
-        tf.summary.image('image', tf.concat(2, images), max_outputs=16)
+                tf.concat(1, [
+                    tf.pack(3 * [tf.maximum(im[:, :, :, cls], mark_t)], axis=3)
+                    for im in [self.y, self.pred]]))
+        tf.summary.image('image', tf.concat(2, images), max_outputs=8)
 
     def train(self, logdir: str, im_ids: List[str]):
         im_ids = sorted(im_ids)
