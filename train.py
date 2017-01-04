@@ -2,6 +2,7 @@
 import argparse
 from collections import defaultdict
 import logging
+from pathlib import Path
 import random
 import time
 from typing import Dict, Iterable, List
@@ -47,6 +48,13 @@ class HyperParams:
                 setattr(self, k, v)
 
 
+@attr.s
+class Image:
+    id = attr.ib()
+    data = attr.ib()
+    mask = attr.ib()
+
+
 class Model:
     def __init__(self, hps: HyperParams):
         self.hps = hps
@@ -69,7 +77,7 @@ class Model:
         x_logits = tf.reshape(
             tf.nn.xw_plus_b(x_hidden, w1, b1),
             [-1, hps.patch_inner, hps.patch_inner, hps.n_classes])
-        self.x_out = tf.nn.sigmoid(x_logits)
+        self.pred = tf.nn.sigmoid(x_logits)
 
         self.loss = tf.reduce_mean(
             tf.nn.sigmoid_cross_entropy_with_logits(x_logits, self.y))
@@ -81,7 +89,8 @@ class Model:
         self.summary_op = tf.summary.merge_all()
 
     def train(self, logdir: str, im_ids: List[str]):
-        im_ids = list(im_ids)
+        im_ids = sorted(im_ids)
+        train_images = [self.load_image(im_id) for im_id in im_ids]
         sv = tf.train.Supervisor(
             logdir=logdir,
             summary_op=None,
@@ -91,43 +100,53 @@ class Model:
         )
         with sv.managed_session() as sess:
             for n_epoch in range(self.hps.n_epochs):
-                random.shuffle(im_ids)
-                for im_id in im_ids:
-                    self.train_on_image(im_id, sv, sess)
+                self.train_on_images(train_images, sv, sess)
 
-    def train_on_image(self, im_id: str,
-                       sv: tf.train.Supervisor, sess: tf.Session):
+    def load_image(self, im_id: str) -> Image:
         logger.info('Loading {}'.format(im_id))
-        hps = self.hps
-        im_data = utils.load_image(im_id)
-        im_data = utils.scale_percentile(im_data)
-        im_size = w, h = im_data.shape[:2]
-        logger.info('Loading polygons')
-        poly_by_type = utils.load_polygons(im_id, im_size)
-        logger.info('Computing masks')
-        masks = np.array(
-            [utils.mask_for_polygons(im_size, poly_by_type[poly_type + 1])
-             for poly_type in range(hps.n_classes)],
-            dtype=np.float32).transpose([1, 2, 0])
-        b = hps.patch_border
-        s = hps.patch_inner
-        all_patch_coords = [(
-            # TODO - on edges too
-            random.randint(b, w - (b + s)),
-            random.randint(b, h - (b + s)))
-            for _ in range(w * h // s)]
-        logger.info('Starting training')
+        im_data_filename = './im_data/{}.npy'.format(im_id)
+        mask_filename = './mask/{}.npy'.format(im_id)
+        if all(Path(p).exists() for p in [im_data_filename, mask_filename]):
+            im_data = np.load(im_data_filename)
+            mask = np.load(mask_filename)
+        else:
+            im_data = utils.load_image(im_id)
+            im_data = utils.scale_percentile(im_data)
+            im_size = im_data.shape[:2]
+            poly_by_type = utils.load_polygons(im_id, im_size)
+            mask = np.array(
+                [utils.mask_for_polygons(im_size, poly_by_type[poly_type + 1])
+                 for poly_type in range(self.hps.n_classes)],
+                dtype=np.uint8).transpose([1, 2, 0])
+            with open(im_data_filename, 'wb') as f:
+                np.save(f, im_data)
+            with open(mask_filename, 'wb') as f:
+                np.save(f, mask)
+        return Image(im_id, im_data, mask)
+
+    def train_on_images(self, train_images: List[Image],
+                        sv: tf.train.Supervisor, sess: tf.Session):
+        b = self.hps.patch_border
+        s = self.hps.patch_inner
+        avg_area = np.mean(
+            [im.data.shape[0] * im.data.shape[1] for im in train_images])
+        n_iter = int(avg_area / (s + b))
 
         def feeds():
-            for patch_coords in utils.chunks(all_patch_coords, hps.batch_size):
-                inputs = np.array(
-                    [im_data[x - b: x + s + b, y - b: y + s + b, :]
-                     for x, y in patch_coords])
-                outputs = np.array(
-                    [masks[x: x + s, y: y + s, :] for x, y in patch_coords])
+            for i in range(n_iter):
+                inputs, outputs = [], []
+                for _ in range(self.hps.batch_size):
+                    im = random.choice(train_images)
+                    w, h = im.data.shape[:2]
+                    x, y = (random.randint(b, w - (b + s)),
+                            random.randint(b, h - (b + s)))
+                    inputs.append(im.data[x - b: x + s + b,
+                                          y - b: y + s + b, :])
+                    outputs.append(im.mask[x: x + s, y: y + s, :])
                 # import IPython; IPython.embed()
-                yield {self.x: inputs, self.y: outputs}
+                yield {self.x: np.array(inputs), self.y: np.array(outputs)}
 
+        logger.info('Starting training')
         self._train_on_feeds(feeds(), sv, sess)
 
     def _train_on_feeds(self, feed_dicts: Iterable[Dict],
@@ -137,15 +156,18 @@ class Model:
                     for threshold in self.hps.thresholds}
         t0 = t00 = time.time()
         for i, feed_dict in enumerate(feed_dicts):
-            fetches = {
-                'loss': self.loss, 'train': self.train_op, 'pred': self.x_out}
+            fetches = {'loss': self.loss, 'train': self.train_op}
             if i % 10 == 0:
                 fetches['summary'] = self.summary_op
+                fetches['pred'] = self.pred
             fetched = sess.run(fetches, feed_dict)
             losses.append(fetched['loss'])
+            if 'pred' in fetched:
+                self._update_jaccard(
+                    tp_fp_fn, feed_dict[self.y], fetched['pred'])
+                # TODO - log pred summary
             if 'summary' in fetched:
                 sv.summary_computed(sess, fetched['summary'])
-            self._update_jaccard(tp_fp_fn, feed_dict[self.y], fetched['pred'])
             t1 = time.time()
             dt = t1 - t0
             if dt > 30 or (t1 - t00 < 30 and dt > 5):
@@ -176,10 +198,9 @@ class Model:
                 fn[cls].append(((pred_ <  threshold) * (mask_ == 1)).sum())
 
     def _jaccard(self, tp, fp, fn):
-        jaccards = [
+        return np.mean([
             sum(tp[cls]) / (sum(tp[cls]) + sum(fn[cls]) + sum(fp[cls]))
-            for cls in range(self.hps.n_classes)]
-        return np.mean(jaccards)
+            for cls in range(self.hps.n_classes)])
 
 
 def main():
@@ -193,7 +214,8 @@ def main():
 
     model = Model(hps=hps)
     all_img_ids = list(utils.get_wkt_data())
-    train_ids, valid_ids = train_test_split(all_img_ids)
+    train_ids, valid_ids = train_test_split(all_img_ids, random_state=0)
+    random.seed(0)
     model.train(logdir=args.logdir, im_ids=train_ids)
 
 
