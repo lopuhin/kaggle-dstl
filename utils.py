@@ -43,7 +43,7 @@ def load_image(im_id: str) -> np.ndarray:
 
 def load_polygons(im_id: str, im_size: Tuple[int, int])\
         -> Dict[int, MultiPolygon]:
-    w, h = im_size
+    h, w = im_size  # they are flipped so that mask_for_polygons works correctly
     w_ = w * (w / (w + 1))
     h_ = h * (h / (h + 1))
 
