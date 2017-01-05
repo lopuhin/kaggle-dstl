@@ -64,19 +64,19 @@ class Model:
             tf.float32, [None, hps.patch_inner, hps.patch_inner, hps.n_classes])
 
         input_dim = hps.patch_size ** 2 * hps.n_channels
-        hidden_dim = output_dim = hps.patch_inner ** 2 * hps.n_classes
-        x = tf.reshape(self.x, [-1, input_dim])
-        w0 = tf.get_variable('w0', shape=[input_dim, hidden_dim])
-        b0 = tf.get_variable('b0', shape=[hidden_dim],
+        w0 = tf.get_variable('w0', shape=[5, 5, 3, 32])
+        b0 = tf.get_variable('b0', shape=[32],
                              initializer=tf.zeros_initializer)
-        x_hidden = tf.nn.relu(tf.nn.xw_plus_b(x, w0, b0))
+        conv2d = lambda _x, _w: tf.nn.conv2d(
+            _x, _w, strides=[1, 1, 1, 1], padding='SAME')
+        x0 = tf.nn.relu(conv2d(self.x, w0) + b0)
 
-        w1 = tf.get_variable('w1', shape=[hidden_dim, output_dim])
-        b1 = tf.get_variable('b1', shape=[output_dim],
+        w1 = tf.get_variable('w1', shape=[5, 5, 32, hps.n_classes])
+        b1 = tf.get_variable('b1', shape=[hps.n_classes],
                              initializer=tf.zeros_initializer)
-        x_logits = tf.reshape(
-            tf.nn.xw_plus_b(x_hidden, w1, b1),
-            [-1, hps.patch_inner, hps.patch_inner, hps.n_classes])
+        x1 = conv2d(x0, w1) + b1
+        b = hps.patch_border
+        x_logits = x1[:, b:-b, b:-b, :]
         self.pred = tf.nn.sigmoid(x_logits)
         self.add_image_summaries()
         self.loss = tf.reduce_mean(
