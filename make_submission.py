@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 import argparse
 import csv
+from functools import partial
+import logging
 from pathlib import Path
+import multiprocessing
 from typing import Dict
 
-import cv2
 import numpy as np
 import shapely.affinity
 from shapely.geometry import MultiPolygon
@@ -13,6 +15,14 @@ import tensorflow as tf
 
 import utils
 from train import Model, HyperParams, Image
+
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+ch = logging.StreamHandler()
+ch.setFormatter(logging.Formatter(
+    '%(asctime)s [%(levelname)s] %(module)s: %(message)s'))
+logger.addHandler(ch)
 
 
 def main():
@@ -33,54 +43,64 @@ def main():
         header = next(reader)
         image_ids = [im_id for im_id, cls, _ in reader if cls == '1']
 
-    debug_store = Path(args.output.split('.csv')[0])
-    debug_store.mkdir(exist_ok=True)
+    store = Path(args.output.split('.csv')[0])
+    store.mkdir(exist_ok=True)
 
     model = Model(hps=hps)
     with tf.Session() as sess:
         saver = tf.train.Saver()
         ckpt = tf.train.get_checkpoint_state(args.logdir)
         saver.restore(sess, ckpt.model_checkpoint_path)
-        submission_data = []
-        for im_id in image_ids:
-            print(im_id)
-            if (only and im_id not in only) or im_id not in utils.get_wkt_data():
-                submission_data.extend(
-                    (im_id, str(cls + 1), 'MULTIPOLYGON EMPTY')
-                    for cls in range(10))
-            else:
-                for poly_type, poly in utils.get_wkt_data()[im_id].items():
-                    poly = shapely.wkt.loads(poly)
-                    submission_data.append(
-                        (im_id, str(poly_type), shapely.wkt.dumps(poly)))
-               #im = Image(id=im_id,
-               #           data=model.preprocess_image(utils.load_image(im_id)))
-               #poly_by_type = get_polygons(
-               #    im, model, sess, args.threshold, debug_store)
-               #for poly_type, polygons in sorted(poly_by_type.items()):
-               #    submission_data.append(
-               #        (im_id, str(poly_type), shapely.wkt.dumps(polygons)))
+        logger.info('Predicting masks')
+        for im_id in (only or image_ids):
+            logger.info(im_id)
+            im = Image(id=im_id,
+                       data=model.preprocess_image(utils.load_image(im_id)))
+            mask = model.image_prediction(im, sess) > args.threshold  # type: np.ndarray
+            assert mask.shape[:2] == im.data.shape[:2]
+            with store.joinpath(im.id).open('wb') as f:
+                np.save(f, mask)
+            # cv2.imwrite(str(store.joinpath('{}_{}.png'.format(im_id, poly_type))),
+            #            cls_mask.astype(np.int32) * 255)
 
+    logger.info('Building polygons')
     with open(args.output, 'wt') as f:
         writer = csv.writer(f)
         writer.writerow(header)
-        writer.writerows(submission_data)
+        with multiprocessing.Pool() as pool:
+            for rows in pool.imap(partial(get_poly_data, store=store),
+                                  image_ids):
+                writer.writerows(rows)
 
 
-def get_polygons(im: Image, model: Model, sess: tf.Session, threshold: float,
-                 debug_store: Path) -> Dict[int, MultiPolygon]:
-    mask = model.image_prediction(im, sess)
-    im_size = im.data.shape[:2]
-    x_scaler, y_scaler = utils.get_scalers(im.id, im_size)
+def get_poly_data(im_id, store):
+    mask_path = store.joinpath(im_id)
+    if mask_path.exists():
+        mask = np.load(str(mask_path))
+        logger.info(im_id)
+        #for poly_type, poly in utils.get_wkt_data()[im_id].items():
+        #    poly = shapely.wkt.loads(poly)
+        #    submission_data.append(
+        #        (im_id, str(poly_type), shapely.wkt.dumps(poly)))
+        poly_by_type = get_polygons(im_id, mask)
+        return [(im_id, str(poly_type), shapely.wkt.dumps(polygons))
+                for poly_type, polygons in sorted(poly_by_type.items())]
+    else:
+        logger.info('{} empty'.format(im_id))
+        return [(im_id, str(cls + 1), 'MULTIPOLYGON EMPTY')
+                for cls in range(10)]
+
+
+def get_polygons(im_id: str, mask: np.ndarray) -> Dict[int, MultiPolygon]:
+    im_size = mask.shape[:2]
+    x_scaler, y_scaler = utils.get_scalers(im_id, im_size)
     x_scaler = 1 / x_scaler
     y_scaler = 1 / y_scaler
     poly_by_type = {}
     for cls in range(mask.shape[-1]):
         poly_type = cls + 1
-        print('poly_type', poly_type)
-        cls_mask = mask[:, :, cls] > threshold
-        cv2.imwrite(str(debug_store.joinpath('{}_{}.png'.format(im.id, poly_type))),
-                    cls_mask.astype(np.int32) * 255)
+        logger.info('{} poly_type {}'.format(im_id, poly_type))
+        cls_mask = mask[:, :, cls]
         polygons = utils.mask_to_polygons(cls_mask)
         poly_by_type[poly_type] = shapely.affinity.scale(
             polygons, xfact=x_scaler, yfact=y_scaler, origin=(0, 0, 0))

@@ -121,7 +121,9 @@ def mask_to_polygons(mask: np.ndarray):
     for shape, value in rasterio.features.shapes(
             mask.astype(np.int16),
             mask=(mask == 1),
-            transform=rasterio.Affine(1.0, 0, 0, 0, 1.0, 0)):
+            transform=rasterio.Affine(1.0, 0, 0, 0, 1.0, 0),
+            connectivity=8,
+            ):
         all_polygons.append(shapely.geometry.shape(shape))
 
     all_polygons = MultiPolygon(all_polygons)
