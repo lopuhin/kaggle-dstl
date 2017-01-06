@@ -4,6 +4,7 @@ matplotlib==1.5.3
 numpy==1.11.3
 opencv-python==3.1.0.3
 protobuf==3.1.0
+rasterio==0.36.0
 Shapely==1.5.17.post1
 scikit-learn==0.18.1
 scipy==0.18.1

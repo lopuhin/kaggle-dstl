@@ -5,10 +5,13 @@ import sys
 
 import cv2
 import numpy as np
-import tifffile as tiff
+import rasterio
+import rasterio.features
 from shapely.geometry import MultiPolygon
 import shapely.wkt
 import shapely.affinity
+import shapely.geometry
+import tifffile as tiff
 
 
 csv.field_size_limit(sys.maxsize)
@@ -43,13 +46,7 @@ def load_image(im_id: str) -> np.ndarray:
 
 def load_polygons(im_id: str, im_size: Tuple[int, int])\
         -> Dict[int, MultiPolygon]:
-    h, w = im_size  # they are flipped so that mask_for_polygons works correctly
-    w_ = w * (w / (w + 1))
-    h_ = h * (h / (h + 1))
-
-    x_max, y_min = get_x_max_y_min(im_id)
-    x_scaler = w_ / x_max
-    y_scaler = h_ / y_min
+    x_scaler, y_scaler = get_scalers(im_id, im_size)
 
     def scale(polygons):
         return shapely.affinity.scale(
@@ -57,6 +54,28 @@ def load_polygons(im_id: str, im_size: Tuple[int, int])\
 
     return {int(poly_type): scale(shapely.wkt.loads(poly))
             for poly_type, poly in get_wkt_data()[im_id].items()}
+
+
+def dump_polygons(im_id: str, im_size: Tuple[int, int], polygons: MultiPolygon)\
+        -> str:
+    """ Save polygons for submission.
+    """
+    x_scaler, y_scaler = get_scalers(im_id, im_size)
+    x_scaler = 1 / x_scaler
+    y_scaler = 1 / y_scaler
+    polygons = shapely.affinity.scale(
+        polygons, xfact=x_scaler, yfact=y_scaler, origin=(0, 0, 0))
+    return shapely.wkt.dumps(polygons)
+
+
+def get_scalers(im_id: str, im_size: Tuple[int, int]) -> Tuple[float, float]:
+    h, w = im_size  # they are flipped so that mask_for_polygons works correctly
+    w_ = w * (w / (w + 1))
+    h_ = h * (h / (h + 1))
+    x_max, y_min = get_x_max_y_min(im_id)
+    x_scaler = w_ / x_max
+    y_scaler = h_ / y_min
+    return x_scaler, y_scaler
 
 
 def mask_for_polygons(
@@ -95,3 +114,21 @@ def scale_percentile(matrix: np.ndarray) -> np.ndarray:
 def chunks(lst, n):
     for i in range(0, len(lst), n):
         yield lst[i: i + n]
+
+
+def mask_to_polygons(mask: np.ndarray):
+    all_polygons = []
+    for shape, value in rasterio.features.shapes(
+            mask.astype(np.int16),
+            mask=(mask == 1),
+            transform=rasterio.Affine(1.0, 0, 0, 0, 1.0, 0)):
+        all_polygons.append(shapely.geometry.shape(shape))
+
+    all_polygons = MultiPolygon(all_polygons)
+    if not all_polygons.is_valid:
+        all_polygons = all_polygons.buffer(0)
+        # Sometimes buffer() converts a simple Multipolygon to just a Polygon,
+        # need to keep it a Multi throughout
+        if all_polygons.type == 'Polygon':
+            all_polygons = MultiPolygon([all_polygons])
+    return all_polygons

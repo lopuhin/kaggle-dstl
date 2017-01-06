@@ -52,7 +52,7 @@ class HyperParams:
 class Image:
     id = attr.ib()
     data = attr.ib()
-    mask = attr.ib()
+    mask = attr.ib(default=None)
 
 
 class Model:
@@ -107,9 +107,8 @@ class Model:
                     for im in [self.y, self.pred]]))
         tf.summary.image('image', tf.concat(2, images), max_outputs=8)
 
-    def train(self, logdir: str, im_ids: List[str]):
-        im_ids = sorted(im_ids)
-        train_images = [self.load_image(im_id) for im_id in im_ids]
+    def train(self, logdir: str, train_ids: List[str], valid_ids: List[str]):
+        train_images = [self.load_image(im_id) for im_id in sorted(train_ids)]
         sv = tf.train.Supervisor(
             logdir=logdir,
             summary_op=None,
@@ -117,10 +116,19 @@ class Model:
             save_summaries_secs=10,
             save_model_secs=60,
         )
+        valid_images = None
         with sv.managed_session() as sess:
             for n_epoch in range(self.hps.n_epochs):
-                logger.info('Epoch {}'.format(n_epoch))
+                logger.info('Epoch {}, training'.format(n_epoch + 1))
                 self.train_on_images(train_images, sv, sess)
+                if valid_images is None:
+                    valid_images = [self.load_image(im_id)
+                                    for im_id in sorted(valid_ids)]
+                logger.info('Epoch {}, validation'.format(n_epoch + 1))
+                self.validate_on_images(valid_images, sv, sess)
+
+    def preprocess_image(self, im_data: np.ndarray) -> np.ndarray:
+        return utils.scale_percentile(im_data)
 
     def load_image(self, im_id: str) -> Image:
         logger.info('Loading {}'.format(im_id))
@@ -130,8 +138,7 @@ class Model:
             im_data = np.load(im_data_filename)
             mask = np.load(mask_filename)
         else:
-            im_data = utils.load_image(im_id)
-            im_data = utils.scale_percentile(im_data)
+            im_data = self.preprocess_image(utils.load_image(im_id))
             im_size = im_data.shape[:2]
             poly_by_type = utils.load_polygons(im_id, im_size)
             mask = np.array(
@@ -163,16 +170,24 @@ class Model:
                     inputs.append(im.data[x - b: x + s + b,
                                           y - b: y + s + b, :])
                     outputs.append(im.mask[x: x + s, y: y + s, :])
-                # import IPython; IPython.embed()
                 yield {self.x: np.array(inputs), self.y: np.array(outputs)}
 
-        self._train_on_feeds(feeds(), sv, sess)
+        self._train_on_feeds(feeds(), sv=sv, sess=sess)
 
     def _train_on_feeds(self, feed_dicts: Iterable[Dict],
                         sv: tf.train.Supervisor, sess: tf.Session):
         losses = []
-        tp_fp_fn = {threshold: [defaultdict(list) for _ in range(3)]
-                    for threshold in self.hps.thresholds}
+        tp_fp_fn = self._jaccard_store()
+
+        def log():
+            logger.info(
+                'Loss: {loss:.3f}, speed: {speed:,} patches/s, '
+                'Jaccard: {jaccard}'.format(
+                    loss=np.mean(losses),
+                    speed=int(len(losses) * self.hps.batch_size / dt),
+                    jaccard=self._format_jaccard(tp_fp_fn),
+                ))
+
         t0 = t00 = time.time()
         for i, feed_dict in enumerate(feed_dicts):
             fetches = {'loss': self.loss, 'train': self.train_op}
@@ -190,22 +205,15 @@ class Model:
             t1 = time.time()
             dt = t1 - t0
             if dt > 30 or (t1 - t00 < 30 and dt > 5):
-                logger.info(
-                    'Loss: {loss:.3f}, speed: {speed:,} patches/s, '
-                    'Jaccard: {jaccard}'.format(
-                        loss=np.mean(losses),
-                        speed=int(len(losses) * self.hps.batch_size / dt),
-                        jaccard=', '.join(
-                            'at {:.2f}: {:.3f}'.format(
-                                threshold, self._jaccard(tp, fp, fn))
-                            for threshold, (tp, fp, fn)
-                            in sorted(tp_fp_fn.items()))
-                    ))
+                log()
                 losses = []
-                for for_threshold in tp_fp_fn.values():
-                    for dct in for_threshold:
-                        dct.clear()
+                tp_fp_fn = self._jaccard_store()
                 t0 = t1
+        log()
+
+    def _jaccard_store(self):
+        return {threshold: [defaultdict(list) for _ in range(3)]
+                for threshold in self.hps.thresholds}
 
     def _update_jaccard(self, tp_fp_fn, mask, pred):
         for threshold, (tp, fp, fn) in tp_fp_fn.items():
@@ -221,6 +229,76 @@ class Model:
             sum(tp[cls]) / (sum(tp[cls]) + sum(fn[cls]) + sum(fp[cls]))
             for cls in range(self.hps.n_classes)])
 
+    def _format_jaccard(self, tp_fp_fn):
+        return ', '.join(
+            'at {:.2f}: {:.3f}'.format(
+                threshold, self._jaccard(tp, fp, fn))
+            for threshold, (tp, fp, fn)
+            in sorted(tp_fp_fn.items()))
+
+    def validate_on_images(self, valid_images: List[Image],
+                           sv: tf.train.Supervisor, sess: tf.Session):
+        b = self.hps.patch_border
+        s = self.hps.patch_inner
+        losses = []
+        tp_fp_fn = self._jaccard_store()
+        for im in valid_images:
+            logger.info(im.id)
+            w, h = im.data.shape[:2]
+            xs = range(b, w - (b + s), s)
+            ys = range(b, h - (b + s), s)
+            all_xy = [(x, y) for x in xs for y in ys]
+            pred_mask = np.zeros([w, h, self.hps.n_classes])
+            # TODO - again, borders
+            # TODO - missing incomplete patches
+            # TODO - smooth?
+            for xy_batch in utils.chunks(all_xy, 16 * self.hps.batch_size):
+                inputs = np.array([im.data[x - b: x + s + b,
+                                           y - b: y + s + b, :]
+                                   for x, y in xy_batch])
+                outputs = np.array([im.mask[x: x + s, y: y + s, :]
+                                    for x, y in xy_batch])
+                feed_dict = {self.x: inputs, self.y: outputs}
+                loss, pred = sess.run([self.loss, self.pred], feed_dict)
+                losses.append(loss)
+                for (x, y), mask in zip(xy_batch, pred):
+                    pred_mask[x: x + s, y: y + s, :] = mask
+            self._update_jaccard(tp_fp_fn, im.mask, pred_mask)
+        loss = np.mean(losses)
+        logger.info('Validation loss: {:.3f}, jaccard: {}'.format(
+            loss, self._format_jaccard(tp_fp_fn)))
+        # TODO - per-class loss
+        self._log_summary('valid/loss', loss, sv, sess)
+        # TODO - write jaccard summary
+
+    def image_prediction(self, im: Image, sess: tf.Session):
+        # FIXME - some copy-paste
+        w, h = im.data.shape[:2]
+        b = self.hps.patch_border
+        s = self.hps.patch_inner
+        xs = range(b, w - (b + s), s)
+        ys = range(b, h - (b + s), s)
+        all_xy = [(x, y) for x in xs for y in ys]
+        pred_mask = np.zeros([w, h, self.hps.n_classes])
+        # TODO - again, borders
+        # TODO - missing incomplete patches
+        # TODO - smooth?
+        for xy_batch in utils.chunks(all_xy, 16 * self.hps.batch_size):
+            inputs = np.array([im.data[x - b: x + s + b,
+                               y - b: y + s + b, :]
+                               for x, y in xy_batch])
+            feed_dict = {self.x: inputs}
+            pred = sess.run(self.pred, feed_dict)
+            for (x, y), mask in zip(xy_batch, pred):
+                pred_mask[x: x + s, y: y + s, :] = mask
+        return pred_mask
+
+    def _log_summary(self, name: str, value,
+                     sv: tf.train.Supervisor, sess: tf.Session):
+        summary = tf.Summary()
+        summary.value.add(tag=name, simple_value=float(value))
+        sv.summary_computed(sess, summary, global_step=self.global_step)
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -235,7 +313,7 @@ def main():
     all_img_ids = list(utils.get_wkt_data())
     train_ids, valid_ids = train_test_split(all_img_ids, random_state=0)
     random.seed(0)
-    model.train(logdir=args.logdir, im_ids=train_ids)
+    model.train(logdir=args.logdir, train_ids=train_ids, valid_ids=valid_ids)
 
 
 if __name__ == '__main__':
