@@ -52,7 +52,8 @@ def main():
         ckpt = tf.train.get_checkpoint_state(args.logdir)
         saver.restore(sess, ckpt.model_checkpoint_path)
         logger.info('Predicting masks')
-        for im_id in (only or image_ids):
+        train_ids = set(utils.get_wkt_data())
+        for im_id in sorted(set(only or image_ids) - train_ids):
             logger.info(im_id)
             im = Image(id=im_id,
                        data=model.preprocess_image(utils.load_image(im_id)))
@@ -75,13 +76,13 @@ def main():
 
 def get_poly_data(im_id, store):
     mask_path = store.joinpath(im_id)
-    if mask_path.exists():
+    train_polygons = utils.get_wkt_data().get(im_id)
+    if train_polygons:
+        return [(im_id, str(poly_type), poly)
+                for poly_type, poly in train_polygons.items()]
+    elif mask_path.exists():
         mask = np.load(str(mask_path))
         logger.info(im_id)
-        #for poly_type, poly in utils.get_wkt_data()[im_id].items():
-        #    poly = shapely.wkt.loads(poly)
-        #    submission_data.append(
-        #        (im_id, str(poly_type), shapely.wkt.dumps(poly)))
         poly_by_type = get_polygons(im_id, mask)
         return [(im_id, str(poly_type), shapely.wkt.dumps(polygons))
                 for poly_type, polygons in sorted(poly_by_type.items())]

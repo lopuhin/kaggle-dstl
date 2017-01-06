@@ -1,4 +1,5 @@
 import csv
+from collections import defaultdict
 from itertools import islice
 from typing import Dict, Tuple
 import sys
@@ -7,7 +8,7 @@ import cv2
 import numpy as np
 import rasterio
 import rasterio.features
-from shapely.geometry import MultiPolygon
+from shapely.geometry import MultiPolygon, Polygon
 import shapely.wkt
 import shapely.affinity
 import shapely.geometry
@@ -116,15 +117,34 @@ def chunks(lst, n):
         yield lst[i: i + n]
 
 
-def mask_to_polygons(mask: np.ndarray):
+def mask_to_polygons(mask: np.ndarray, epsilon=5., min_area=10.)\
+        -> MultiPolygon:
+    # TODO - tune epsilon and min_area, different values for different classes
+    image, contours, hierarchy = cv2.findContours(
+        ((mask == 1) * 255).astype(np.uint8),
+        cv2.RETR_CCOMP, cv2.CHAIN_APPROX_TC89_KCOS)
+    approx_contours = [cv2.approxPolyDP(cnt, epsilon, True) for cnt in contours]
+    if not contours:
+        return MultiPolygon()
+
+    cnt_children = defaultdict(list)
+    child_contours = set()
+    assert hierarchy.shape[0] == 1
+    # http://docs.opencv.org/3.1.0/d9/d8b/tutorial_py_contours_hierarchy.html
+    for idx, (_, _, _, parent_idx) in enumerate(hierarchy[0]):
+        if parent_idx != -1:
+            child_contours.add(idx)
+            cnt_children[parent_idx].append(approx_contours[idx])
+
     all_polygons = []
-    for shape, value in rasterio.features.shapes(
-            mask.astype(np.int16),
-            mask=(mask == 1),
-            transform=rasterio.Affine(1.0, 0, 0, 0, 1.0, 0),
-            connectivity=8,
-            ):
-        all_polygons.append(shapely.geometry.shape(shape))
+    for idx, cnt in enumerate(approx_contours):
+        if idx not in child_contours and cv2.contourArea(cnt) >= min_area:
+            assert cnt.shape[1] == 1
+            poly = Polygon(
+                shell=cnt[:, 0, :],
+                holes=[c[:, 0, :] for c in cnt_children.get(idx, [])
+                       if cv2.contourArea(c) >= min_area])
+            all_polygons.append(poly)
 
     all_polygons = MultiPolygon(all_polygons)
     if not all_polygons.is_valid:
