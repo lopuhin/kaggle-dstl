@@ -54,12 +54,16 @@ def main():
         logger.info('Predicting masks')
         train_ids = set(utils.get_wkt_data())
         for im_id in sorted(set(only or image_ids) - train_ids):
+            im_path = store.joinpath(im_id)
+            if im_path.exists():
+                logger.info('Skip {}: already exists'.format(im_id))
+                continue
             logger.info(im_id)
             im = Image(id=im_id,
                        data=model.preprocess_image(utils.load_image(im_id)))
             mask = model.image_prediction(im, sess) > args.threshold  # type: np.ndarray
             assert mask.shape[:2] == im.data.shape[:2]
-            with store.joinpath(im.id).open('wb') as f:
+            with im_path.open('wb') as f:
                 np.save(f, mask)
             # cv2.imwrite(str(store.joinpath('{}_{}.png'.format(im_id, poly_type))),
             #            cls_mask.astype(np.int32) * 255)
@@ -68,7 +72,7 @@ def main():
     with open(args.output, 'wt') as f:
         writer = csv.writer(f)
         writer.writerow(header)
-        with multiprocessing.Pool() as pool:
+        with multiprocessing.Pool(processes=4) as pool:
             for rows in pool.imap(partial(get_poly_data, store=store),
                                   image_ids):
                 writer.writerows(rows)
