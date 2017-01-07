@@ -232,7 +232,7 @@ class Model:
                 ))
 
         t0 = t00 = time.time()
-        with ThreadPool(processes=8) as pool:
+        with ThreadPool(processes=4) as pool:
             for i, feed_dict in enumerate(pool.imap_unordered(
                     gen_batch, range(n_batches), chunksize=16)):
                 fetches = {'loss': self.loss, 'train': self.train_op}
