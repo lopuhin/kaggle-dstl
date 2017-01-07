@@ -27,13 +27,13 @@ logger.addHandler(ch)
 class HyperParams:
     n_channels = attr.ib(default=3)
     n_classes = attr.ib(default=10)
-    thresholds = attr.ib(default=[0.08, 0.1, 0.12, 0.3, 0.5])
+    thresholds = attr.ib(default=[0.3, 0.4, 0.5])
 
     patch_inner = attr.ib(default=32)
     patch_border = attr.ib(default=16)
 
     n_epochs = attr.ib(default=10)
-    learning_rate = attr.ib(default=0.1)
+    learning_rate = attr.ib(default=0.001)
     batch_size = attr.ib(default=32)
 
     @property
@@ -63,7 +63,6 @@ class Model:
         self.y = tf.placeholder(
             tf.float32, [None, hps.patch_inner, hps.patch_inner, hps.n_classes])
 
-        input_dim = hps.patch_size ** 2 * hps.n_channels
         w0 = tf.get_variable('w0', shape=[5, 5, 3, 32])
         b0 = tf.get_variable('b0', shape=[32],
                              initializer=tf.zeros_initializer)
@@ -79,14 +78,21 @@ class Model:
         x_logits = x1[:, b:-b, b:-b, :]
         self.pred = tf.nn.sigmoid(x_logits)
         self.add_image_summaries()
-        self.loss = tf.reduce_mean(
-            tf.nn.sigmoid_cross_entropy_with_logits(x_logits, self.y))
-        tf.summary.scalar('loss', self.loss)
+        losses = tf.nn.sigmoid_cross_entropy_with_logits(x_logits, self.y)
+        self.cls_losses = [tf.reduce_mean(losses[:, :, :, cls])
+                           for cls in range(hps.n_classes)]
+        self.loss = tf.reduce_mean(losses)
+        self.add_loss_summaries()
         self.global_step = tf.Variable(0, name='global_step', trainable=False)
         optimizer = tf.train.AdamOptimizer(learning_rate=hps.learning_rate)
         self.train_op = optimizer.minimize(
             self.loss * hps.batch_size, self.global_step)
         self.summary_op = tf.summary.merge_all()
+
+    def add_loss_summaries(self):
+        tf.summary.scalar('loss/average', self.loss)
+        for cls, loss in enumerate(self.cls_losses):
+            tf.summary.scalar('loss/cls-{}'.format(cls), loss)
 
     def add_image_summaries(self):
         b = self.hps.patch_border
@@ -191,7 +197,7 @@ class Model:
         t0 = t00 = time.time()
         for i, feed_dict in enumerate(feed_dicts):
             fetches = {'loss': self.loss, 'train': self.train_op}
-            if i % 10 == 0:
+            if i % 20 == 0:
                 fetches['summary'] = self.summary_op
                 fetches['pred'] = self.pred
             fetched = sess.run(fetches, feed_dict)
@@ -199,7 +205,7 @@ class Model:
             if 'pred' in fetched:
                 self._update_jaccard(
                     tp_fp_fn, feed_dict[self.y], fetched['pred'])
-                # TODO - log pred summary
+                self._log_jaccard(tp_fp_fn, sv, sess)
             if 'summary' in fetched:
                 sv.summary_computed(sess, fetched['summary'])
             t1 = time.time()
@@ -218,16 +224,33 @@ class Model:
     def _update_jaccard(self, tp_fp_fn, mask, pred):
         for threshold, (tp, fp, fn) in tp_fp_fn.items():
             for cls in range(self.hps.n_classes):
-                pred_ = pred[:, :, cls]
-                mask_ = mask[:, :, cls]
-                tp[cls].append(((pred_ >= threshold) * (mask_ == 1)).sum())
-                fp[cls].append(((pred_ >= threshold) * (mask_ == 0)).sum())
-                fn[cls].append(((pred_ <  threshold) * (mask_ == 1)).sum())
+                pos_pred = pred[:, :, cls] >= threshold
+                pos_mask = mask[:, :, cls] == 1
+                tp[cls].append(( pos_pred &  pos_mask).sum())
+                fp[cls].append(( pos_pred & ~pos_mask).sum())
+                fn[cls].append((~pos_pred &  pos_mask).sum())
+
+    def _log_jaccard(self, tp_fp_fn, sv, sess, prefix=''):
+        for threshold, (tp, fp, fn) in tp_fp_fn.items():
+            jaccards = []
+            for cls in range(self.hps.n_classes):
+                jaccard = self._cls_jaccard(tp, fp, fn, cls)
+                self._log_summary(
+                    '{}jaccard-{}/cls-{}'.format(prefix, threshold, cls),
+                    jaccard, sv, sess)
+                jaccards.append(jaccard)
+            self._log_summary(
+                '{}jaccard-{}/average'.format(prefix, threshold),
+                np.mean(jaccards), sv, sess)
 
     def _jaccard(self, tp, fp, fn):
-        return np.mean([
-            sum(tp[cls]) / (sum(tp[cls]) + sum(fn[cls]) + sum(fp[cls]))
-            for cls in range(self.hps.n_classes)])
+        return np.mean([self._cls_jaccard(tp, fp, fn, cls)
+                        for cls in range(self.hps.n_classes)])
+
+    def _cls_jaccard(self, tp, fp, fn, cls):
+        if sum(tp[cls]) == 0:
+            return 0
+        return sum(tp[cls]) / (sum(tp[cls]) + sum(fn[cls]) + sum(fp[cls]))
 
     def _format_jaccard(self, tp_fp_fn):
         return ', '.join(
@@ -249,9 +272,6 @@ class Model:
             ys = range(b, h - (b + s), s)
             all_xy = [(x, y) for x in xs for y in ys]
             pred_mask = np.zeros([w, h, self.hps.n_classes])
-            # TODO - again, borders
-            # TODO - missing incomplete patches
-            # TODO - smooth?
             for xy_batch in utils.chunks(all_xy, 16 * self.hps.batch_size):
                 inputs = np.array([im.data[x - b: x + s + b,
                                            y - b: y + s + b, :]
@@ -259,17 +279,21 @@ class Model:
                 outputs = np.array([im.mask[x: x + s, y: y + s, :]
                                     for x, y in xy_batch])
                 feed_dict = {self.x: inputs, self.y: outputs}
-                loss, pred = sess.run([self.loss, self.pred], feed_dict)
-                losses.append(loss)
+                cls_losses, pred = sess.run([
+                    self.cls_losses, self.pred], feed_dict)
+                losses.append(cls_losses)
                 for (x, y), mask in zip(xy_batch, pred):
                     pred_mask[x: x + s, y: y + s, :] = mask
             self._update_jaccard(tp_fp_fn, im.mask, pred_mask)
+        losses = np.array(losses)
         loss = np.mean(losses)
         logger.info('Validation loss: {:.3f}, jaccard: {}'.format(
             loss, self._format_jaccard(tp_fp_fn)))
-        # TODO - per-class loss
-        self._log_summary('valid/loss', loss, sv, sess)
-        # TODO - write jaccard summary
+        self._log_summary('valid-loss/average', loss, sv, sess)
+        for cls in range(self.hps.n_classes):
+            self._log_summary('valid-loss/cls-{}'.format(cls),
+                              np.mean(losses[:, cls]), sv, sess)
+        self._log_jaccard(tp_fp_fn, sv, sess, prefix='valid-')
 
     def image_prediction(self, im: Image, sess: tf.Session):
         # FIXME - some copy-paste
@@ -280,12 +304,9 @@ class Model:
         ys = range(b, h - (b + s), s)
         all_xy = [(x, y) for x in xs for y in ys]
         pred_mask = np.zeros([w, h, self.hps.n_classes])
-        # TODO - again, borders
-        # TODO - missing incomplete patches
-        # TODO - smooth?
         for xy_batch in utils.chunks(all_xy, 16 * self.hps.batch_size):
             inputs = np.array([im.data[x - b: x + s + b,
-                               y - b: y + s + b, :]
+                                       y - b: y + s + b, :]
                                for x, y in xy_batch])
             feed_dict = {self.x: inputs}
             pred = sess.run(self.pred, feed_dict)
@@ -297,7 +318,8 @@ class Model:
                      sv: tf.train.Supervisor, sess: tf.Session):
         summary = tf.Summary()
         summary.value.add(tag=name, simple_value=float(value))
-        sv.summary_computed(sess, summary, global_step=self.global_step)
+        sv.summary_computed(sess, summary,
+                            global_step=self.global_step.eval(session=sess))
 
 
 def main():
