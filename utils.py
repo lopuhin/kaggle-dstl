@@ -41,13 +41,15 @@ def get_wkt_data() -> Dict[str, Dict[int, str]]:
 
 def load_image(im_id: str) -> np.ndarray:
     im_rgb = tiff.imread('./three_band/{}.tif'.format(im_id)).transpose([1, 2, 0])
-    im_a = tiff.imread('sixteen_band/{}_A.tif'.format(im_id)).transpose([1, 2, 0])
+    im_p = tiff.imread('sixteen_band/{}_P.tif'.format(im_id))
     im_m = tiff.imread('sixteen_band/{}_M.tif'.format(im_id)).transpose([1, 2, 0])
-    im_p = np.expand_dims(tiff.imread('sixteen_band/{}_P.tif'.format(im_id)), 2)
-    assert im_rgb.shape[:2] == im_p.shape[:2]
+    im_a = tiff.imread('sixteen_band/{}_A.tif'.format(im_id)).transpose([1, 2, 0])
     h, w = im_rgb.shape[:2]
-    im_a = cv2.resize(im_a, (w, h), interpolation=cv2.INTER_CUBIC)
+    if im_p.shape != im_rgb.shape[:2]:
+        im_p = cv2.resize(im_p, (w, h), interpolation=cv2.INTER_CUBIC)
+    im_p = np.expand_dims(im_p, 2)
     im_m = cv2.resize(im_m, (w, h), interpolation=cv2.INTER_CUBIC)
+    im_a = cv2.resize(im_a, (w, h), interpolation=cv2.INTER_CUBIC)
     return np.concatenate([im_rgb, im_p, im_m, im_a], axis=2)
 
 
