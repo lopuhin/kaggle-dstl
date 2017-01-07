@@ -136,11 +136,20 @@ class Model:
                     self.validate_on_images(valid_images, sv, sess)
 
     def preprocess_image(self, im_data: np.ndarray) -> np.ndarray:
-        # TODO - ideally, calculate over all images
-        mean = np.mean(im_data, axis=(0, 1))
-        std = np.std(im_data, axis=(0, 1))
-        print('mean', ' '.join('{:.0f}'.format(v) for v in mean))
-        print('std ', ' '.join('{:.0f}'.format(v) for v in std))
+        # mean = np.mean(im_data, axis=(0, 1))
+        # std = np.std(im_data, axis=(0, 1))
+        std = np.array([
+            62.00827863,  46.65453694,  24.7612776,   54.50255552,
+            13.48645938,  24.76103598,  46.52145521,  62.36207267,
+            61.54443128,  59.2848377,   85.72930307,  68.62678882,
+            448.43441827, 634.79572682, 567.21509273, 523.10079804,
+            530.42441592, 461.8304455,  486.95994727, 478.63768386])
+        mean = np.array([
+            413.62140162,  459.99189475,  325.6722122,   502.57730746,
+            294.6884949,   325.82117752,  460.0356966,   482.39001004,
+            413.79388678,  527.57681818,  678.22878001,  529.64198655,
+            4243.25847972, 4473.47956815, 4178.84648439, 3708.16482918,
+            2887.49330138, 2589.61786722, 2525.53347208, 2417.23798598])
         return (im_data - mean) / std
 
     def load_image(self, im_id: str) -> Image:
