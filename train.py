@@ -3,9 +3,10 @@ import argparse
 from collections import defaultdict
 import logging
 from pathlib import Path
+from multiprocessing.pool import ThreadPool
 import random
 import time
-from typing import Dict, Iterable, List
+from typing import Callable, Dict, List
 
 import attr
 import numpy as np
@@ -196,28 +197,27 @@ class Model:
             [im.data.shape[0] * im.data.shape[1] for im in train_images])
         n_batches = int(avg_area / (s + b) / self.hps.batch_size)
 
-        def feeds():
-            for _ in range(n_batches):
-                inputs, outputs = [], []
-                for _ in range(self.hps.batch_size):
-                    im = random.choice(train_images)
-                    w, h = im.data.shape[:2]
-                    x, y = (random.randint(mb, w - (mb + s)),
-                            random.randint(mb, h - (mb + s)))
-                    patch = im.data[x - mb: x + s + mb, y - mb: y + s + mb, :]
-                    mask = im.mask[x - m: x + s + m, y - m: y + s + m, :]
-                    # TODO - mirror flips
-                    angle = random.random() * 360
-                    patch = utils.rotated(patch, angle)
-                    mask = utils.rotated(mask, angle)
-                    inputs.append(patch[m: -m, m: -m, :])
-                    outputs.append(mask[m: -m, m: -m, :])
-                    # TODO - check that they are still aligned
-                yield {self.x: np.array(inputs), self.y: np.array(outputs)}
+        def gen_batch(_):
+            inputs, outputs = [], []
+            for _ in range(self.hps.batch_size):
+                im = random.choice(train_images)
+                w, h = im.data.shape[:2]
+                x, y = (random.randint(mb, w - (mb + s)),
+                        random.randint(mb, h - (mb + s)))
+                patch = im.data[x - mb: x + s + mb, y - mb: y + s + mb, :]
+                mask = im.mask[x - m: x + s + m, y - m: y + s + m, :]
+                # TODO - mirror flips
+                angle = random.random() * 360
+                patch = utils.rotated(patch, angle)
+                mask = utils.rotated(mask, angle)
+                inputs.append(patch[m: -m, m: -m, :])
+                outputs.append(mask[m: -m, m: -m, :])
+                # TODO - check that they are still aligned
+            return {self.x: np.array(inputs), self.y: np.array(outputs)}
 
-        self._train_on_feeds(feeds(), sv=sv, sess=sess)
+        self._train_on_feeds(gen_batch, n_batches, sv=sv, sess=sess)
 
-    def _train_on_feeds(self, feed_dicts: Iterable[Dict],
+    def _train_on_feeds(self, gen_batch: Callable[[int], Dict], n_batches: int,
                         sv: tf.train.Supervisor, sess: tf.Session):
         losses = []
         tp_fp_fn = self._jaccard_store()
@@ -232,27 +232,29 @@ class Model:
                 ))
 
         t0 = t00 = time.time()
-        for i, feed_dict in enumerate(feed_dicts):
-            fetches = {'loss': self.loss, 'train': self.train_op}
-            if i % 20 == 0:
-                fetches['summary'] = self.summary_op
-                fetches['pred'] = self.pred
-            fetched = sess.run(fetches, feed_dict)
-            losses.append(fetched['loss'])
-            if 'pred' in fetched:
-                self._update_jaccard(
-                    tp_fp_fn, feed_dict[self.y], fetched['pred'])
-                self._log_jaccard(tp_fp_fn, sv, sess)
-            if 'summary' in fetched:
-                sv.summary_computed(sess, fetched['summary'])
-            t1 = time.time()
-            dt = t1 - t0
-            if dt > 30 or (t1 - t00 < 30 and dt > 5):
-                log()
-                losses = []
-                tp_fp_fn = self._jaccard_store()
-                t0 = t1
-        log()
+        with ThreadPool(processes=8) as pool:
+            for i, feed_dict in enumerate(pool.imap_unordered(
+                    gen_batch, range(n_batches), chunksize=16)):
+                fetches = {'loss': self.loss, 'train': self.train_op}
+                if i % 20 == 0:
+                    fetches['summary'] = self.summary_op
+                    fetches['pred'] = self.pred
+                fetched = sess.run(fetches, feed_dict)
+                losses.append(fetched['loss'])
+                if 'pred' in fetched:
+                    self._update_jaccard(
+                        tp_fp_fn, feed_dict[self.y], fetched['pred'])
+                    self._log_jaccard(tp_fp_fn, sv, sess)
+                if 'summary' in fetched:
+                    sv.summary_computed(sess, fetched['summary'])
+                t1 = time.time()
+                dt = t1 - t0
+                if dt > 30 or (t1 - t00 < 30 and dt > 5):
+                    log()
+                    losses = []
+                    tp_fp_fn = self._jaccard_store()
+                    t0 = t1
+            log()
 
     def _jaccard_store(self):
         return {threshold: [defaultdict(list) for _ in range(3)]
