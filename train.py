@@ -9,7 +9,7 @@ from typing import Dict, Iterable, List
 
 import attr
 import numpy as np
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import GroupShuffleSplit
 import tensorflow as tf
 
 import utils
@@ -333,7 +333,15 @@ def main():
 
     model = Model(hps=hps)
     all_img_ids = list(utils.get_wkt_data())
-    train_ids, valid_ids = train_test_split(all_img_ids, random_state=0)
+    # Fix for images of the same place in different seasons
+    labels = [im_id.replace('6110', '6140')
+                   .replace('6020', '6130')
+                   .replace('6030', '6150')
+              for im_id in all_img_ids]
+    train_ids, valid_ids = [[all_img_ids[idx] for idx in g] for g in next(
+        GroupShuffleSplit(random_state=0).split(all_img_ids, groups=labels))]
+    logger.info('Train: {}'.format(' '.join(sorted(train_ids))))
+    logger.info('Valid: {}'.format(' '.join(sorted(valid_ids))))
     random.seed(0)
     model.train(logdir=args.logdir, train_ids=train_ids, valid_ids=valid_ids)
 
