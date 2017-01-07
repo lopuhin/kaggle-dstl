@@ -169,6 +169,9 @@ class Model:
                         sv: tf.train.Supervisor, sess: tf.Session):
         b = self.hps.patch_border
         s = self.hps.patch_inner
+        # Extra margin for rotation
+        m = int(np.ceil((np.sqrt(2) - 1) * (b + s / 2)))
+        mb = m + b  # full margin
         avg_area = np.mean(
             [im.data.shape[0] * im.data.shape[1] for im in train_images])
         n_batches = int(avg_area / (s + b) / self.hps.batch_size)
@@ -179,11 +182,17 @@ class Model:
                 for _ in range(self.hps.batch_size):
                     im = random.choice(train_images)
                     w, h = im.data.shape[:2]
-                    x, y = (random.randint(b, w - (b + s)),
-                            random.randint(b, h - (b + s)))
-                    inputs.append(im.data[x - b: x + s + b,
-                                          y - b: y + s + b, :])
-                    outputs.append(im.mask[x: x + s, y: y + s, :])
+                    x, y = (random.randint(mb, w - (mb + s)),
+                            random.randint(mb, h - (mb + s)))
+                    patch = im.data[x - mb: x + s + mb, y - mb: y + s + mb, :]
+                    mask = im.mask[x - m: x + s + m, y - m: y + s + m, :]
+                    # TODO - mirror flips
+                    angle = random.random() * 360
+                    patch = utils.rotated(patch, angle)
+                    mask = utils.rotated(mask, angle)
+                    inputs.append(patch[m: -m, m: -m, :])
+                    outputs.append(mask[m: -m, m: -m, :])
+                    # TODO - check that they are still aligned
                 yield {self.x: np.array(inputs), self.y: np.array(outputs)}
 
         self._train_on_feeds(feeds(), sv=sv, sess=sess)
@@ -352,6 +361,7 @@ def main():
     logger.info('Valid: {}'.format(' '.join(sorted(valid_ids))))
     random.seed(0)
     model.train(logdir=args.logdir, train_ids=train_ids, valid_ids=valid_ids)
+    # model.train(logdir=args.logdir, train_ids=['6120_2_2'], valid_ids=[])
 
 
 if __name__ == '__main__':

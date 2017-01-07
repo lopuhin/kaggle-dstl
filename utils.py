@@ -102,6 +102,13 @@ def mask_for_polygons(
     return img_mask
 
 
+def rotated(patch: np.ndarray, angle: float) -> np.ndarray:
+    im_size = patch.shape[:2]
+    center = tuple(np.array(im_size) / 2)
+    rot_mat = cv2.getRotationMatrix2D(center, angle, 1.0)
+    return cv2.warpAffine(patch, rot_mat, im_size, flags=cv2.INTER_LINEAR)
+
+
 def scale_percentile(matrix: np.ndarray) -> np.ndarray:
     """ Fixes the pixel value range to 2%-98% original distribution of values.
     """
