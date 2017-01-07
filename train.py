@@ -131,8 +131,9 @@ class Model:
                 if valid_images is None:
                     valid_images = [self.load_image(im_id)
                                     for im_id in sorted(valid_ids)]
-                logger.info('Epoch {}, validation'.format(n_epoch + 1))
-                self.validate_on_images(valid_images, sv, sess)
+                if valid_images:
+                    logger.info('Epoch {}, validation'.format(n_epoch + 1))
+                    self.validate_on_images(valid_images, sv, sess)
 
     def preprocess_image(self, im_data: np.ndarray) -> np.ndarray:
         # TODO - ideally, calculate over all images
@@ -344,24 +345,33 @@ def main():
     arg = parser.add_argument
     arg('logdir', type=str, help='Path to log directory')
     arg('--hps', type=str, help='Change hyperparameters in k1=v1,k2=v2 format')
+    arg('--all', action='store_true',
+        help='Train on all images without validation')
+    arg('--only', type=str,
+        help='Train on this image ids only (comma-separated) without validation')
     args = parser.parse_args()
     hps = HyperParams()
     hps.update(args.hps)
 
     model = Model(hps=hps)
     all_img_ids = list(utils.get_wkt_data())
-    # Fix for images of the same place in different seasons
-    labels = [im_id.replace('6110', '6140')
-                   .replace('6020', '6130')
-                   .replace('6030', '6150')
-              for im_id in all_img_ids]
-    train_ids, valid_ids = [[all_img_ids[idx] for idx in g] for g in next(
-        GroupShuffleSplit(random_state=1).split(all_img_ids, groups=labels))]
-    logger.info('Train: {}'.format(' '.join(sorted(train_ids))))
-    logger.info('Valid: {}'.format(' '.join(sorted(valid_ids))))
+    valid_ids = []
+    if args.only:
+        train_ids = args.only.split(',')
+    elif args.all:
+        train_ids = all_img_ids
+    else:
+        # Fix for images of the same place in different seasons
+        labels = [im_id.replace('6110', '6140')
+                       .replace('6020', '6130')
+                       .replace('6030', '6150')
+                  for im_id in all_img_ids]
+        train_ids, valid_ids = [[all_img_ids[idx] for idx in g] for g in next(
+            GroupShuffleSplit(random_state=1).split(all_img_ids, groups=labels))]
+        logger.info('Train: {}'.format(' '.join(sorted(train_ids))))
+        logger.info('Valid: {}'.format(' '.join(sorted(valid_ids))))
     random.seed(0)
     model.train(logdir=args.logdir, train_ids=train_ids, valid_ids=valid_ids)
-    # model.train(logdir=args.logdir, train_ids=['6120_2_2'], valid_ids=[])
 
 
 if __name__ == '__main__':
