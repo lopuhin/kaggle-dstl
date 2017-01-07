@@ -32,9 +32,14 @@ class HyperParams:
     patch_inner = attr.ib(default=32)
     patch_border = attr.ib(default=16)
 
+    size0 = attr.ib(default=5)
+    filters0 = attr.ib(default=64)
+    size1 = attr.ib(default=5)
+    filters1 = attr.ib(default=64)
+
     n_epochs = attr.ib(default=10)
-    learning_rate = attr.ib(default=0.001)
-    batch_size = attr.ib(default=32)
+    learning_rate = attr.ib(default=0.0001)
+    batch_size = attr.ib(default=128)
 
     @property
     def patch_size(self):
@@ -63,16 +68,18 @@ class Model:
         self.y = tf.placeholder(
             tf.float32, [None, hps.patch_inner, hps.patch_inner, hps.n_classes])
 
-        w0 = tf.get_variable('w0', shape=[5, 5, hps.n_channels, 32])
-        b0 = tf.get_variable('b0', shape=[32],
-                             initializer=tf.zeros_initializer)
+        w0 = tf.get_variable(
+            'w0', shape=[hps.size0, hps.size0, hps.n_channels, hps.filters0])
+        b0 = tf.get_variable(
+            'b0', shape=[hps.filters0], initializer=tf.zeros_initializer)
         conv2d = lambda _x, _w: tf.nn.conv2d(
             _x, _w, strides=[1, 1, 1, 1], padding='SAME')
         x0 = tf.nn.relu(conv2d(self.x, w0) + b0)
 
-        w1 = tf.get_variable('w1', shape=[5, 5, 32, hps.n_classes])
-        b1 = tf.get_variable('b1', shape=[hps.n_classes],
-                             initializer=tf.zeros_initializer)
+        w1 = tf.get_variable(
+            'w1', shape=[hps.size1, hps.size1, hps.filters1, hps.n_classes])
+        b1 = tf.get_variable(
+            'b1', shape=[hps.n_classes], initializer=tf.zeros_initializer)
         x1 = conv2d(x0, w1) + b1
         b = hps.patch_border
         x_logits = x1[:, b:-b, b:-b, :]
@@ -102,7 +109,8 @@ class Model:
         border[b:-b,  b, 0] = border[b:-b, -b, 0] = 1
         border[-b, -b, 0] = 1
         border_t = tf.pack(self.hps.batch_size * [tf.constant(border)])
-        # TODO - would be cool to add other channels as well?
+        # TODO: would be cool to add other channels as well
+        # TODO: fix image color range
         images = [tf.maximum(self.x[:, :, :, :3], border_t)]
         mark = np.zeros([s, s], dtype=np.float32)
         mark[0, 0] = 1
