@@ -25,7 +25,7 @@ logger.addHandler(ch)
 
 @attr.s(slots=True)
 class HyperParams:
-    n_channels = attr.ib(default=3)
+    n_channels = attr.ib(default=20)
     n_classes = attr.ib(default=10)
     thresholds = attr.ib(default=[0.3, 0.4, 0.5])
 
@@ -63,7 +63,7 @@ class Model:
         self.y = tf.placeholder(
             tf.float32, [None, hps.patch_inner, hps.patch_inner, hps.n_classes])
 
-        w0 = tf.get_variable('w0', shape=[5, 5, 3, 32])
+        w0 = tf.get_variable('w0', shape=[5, 5, hps.n_channels, 32])
         b0 = tf.get_variable('b0', shape=[32],
                              initializer=tf.zeros_initializer)
         conv2d = lambda _x, _w: tf.nn.conv2d(
@@ -102,7 +102,8 @@ class Model:
         border[b:-b,  b, 0] = border[b:-b, -b, 0] = 1
         border[-b, -b, 0] = 1
         border_t = tf.pack(self.hps.batch_size * [tf.constant(border)])
-        images = [tf.maximum(self.x, border_t)]
+        # TODO - would be cool to add other channels as well?
+        images = [tf.maximum(self.x[:, :, :, :3], border_t)]
         mark = np.zeros([s, s], dtype=np.float32)
         mark[0, 0] = 1
         mark_t = tf.pack(self.hps.batch_size * [tf.constant(mark)])
@@ -134,25 +135,32 @@ class Model:
                 self.validate_on_images(valid_images, sv, sess)
 
     def preprocess_image(self, im_data: np.ndarray) -> np.ndarray:
-        return utils.scale_percentile(im_data)
+        # TODO - ideally, calculate over all images
+        mean = np.mean(im_data, axis=(0, 1))
+        std = np.std(im_data, axis=(0, 1))
+        print('mean', ' '.join('{:.0f}'.format(v) for v in mean))
+        print('std ', ' '.join('{:.0f}'.format(v) for v in std))
+        return (im_data - mean) / std
 
     def load_image(self, im_id: str) -> Image:
         logger.info('Loading {}'.format(im_id))
         im_data_filename = './im_data/{}.npy'.format(im_id)
         mask_filename = './mask/{}.npy'.format(im_id)
-        if all(Path(p).exists() for p in [im_data_filename, mask_filename]):
+        if Path(im_data_filename).exists():
             im_data = np.load(im_data_filename)
-            mask = np.load(mask_filename)
         else:
             im_data = self.preprocess_image(utils.load_image(im_id))
+            with open(im_data_filename, 'wb') as f:
+                np.save(f, im_data)
+        if Path(mask_filename).exists():
+            mask = np.load(mask_filename)
+        else:
             im_size = im_data.shape[:2]
             poly_by_type = utils.load_polygons(im_id, im_size)
             mask = np.array(
                 [utils.mask_for_polygons(im_size, poly_by_type[poly_type + 1])
                  for poly_type in range(self.hps.n_classes)],
                 dtype=np.uint8).transpose([1, 2, 0])
-            with open(im_data_filename, 'wb') as f:
-                np.save(f, im_data)
             with open(mask_filename, 'wb') as f:
                 np.save(f, mask)
         return Image(im_id, im_data, mask)
@@ -339,7 +347,7 @@ def main():
                    .replace('6030', '6150')
               for im_id in all_img_ids]
     train_ids, valid_ids = [[all_img_ids[idx] for idx in g] for g in next(
-        GroupShuffleSplit(random_state=0).split(all_img_ids, groups=labels))]
+        GroupShuffleSplit(random_state=1).split(all_img_ids, groups=labels))]
     logger.info('Train: {}'.format(' '.join(sorted(train_ids))))
     logger.info('Valid: {}'.format(' '.join(sorted(valid_ids))))
     random.seed(0)

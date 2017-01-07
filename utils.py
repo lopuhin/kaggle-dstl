@@ -6,8 +6,6 @@ import sys
 
 import cv2
 import numpy as np
-import rasterio
-import rasterio.features
 from shapely.geometry import MultiPolygon, Polygon
 import shapely.wkt
 import shapely.affinity
@@ -42,7 +40,15 @@ def get_wkt_data() -> Dict[str, Dict[int, str]]:
 
 
 def load_image(im_id: str) -> np.ndarray:
-    return tiff.imread('./three_band/{}.tif'.format(im_id)).transpose([1, 2, 0])
+    im_rgb = tiff.imread('./three_band/{}.tif'.format(im_id)).transpose([1, 2, 0])
+    im_a = tiff.imread('sixteen_band/{}_A.tif'.format(im_id)).transpose([1, 2, 0])
+    im_m = tiff.imread('sixteen_band/{}_M.tif'.format(im_id)).transpose([1, 2, 0])
+    im_p = np.expand_dims(tiff.imread('sixteen_band/{}_P.tif'.format(im_id)), 2)
+    assert im_rgb.shape[:2] == im_p.shape[:2]
+    h, w = im_rgb.shape[:2]
+    im_a = cv2.resize(im_a, (w, h), interpolation=cv2.INTER_CUBIC)
+    im_m = cv2.resize(im_m, (w, h), interpolation=cv2.INTER_CUBIC)
+    return np.concatenate([im_rgb, im_p, im_m, im_a], axis=2)
 
 
 def load_polygons(im_id: str, im_size: Tuple[int, int])\
