@@ -275,23 +275,31 @@ class Model:
                 if 'summary' in fetched:
                     sv.summary_computed(sess, fetched['summary'])
                 t1 = time.time()
-                dt = t1 - t0
-                if dt > 30 or (t1 - t00 < 30 and dt > 5):
+                if t1 - t0 > 10:
                     log()
                     losses = []
                     tp_fp_fn = self._jaccard_store()
                     t0 = t1
-            log()
+            if losses:
+                log()
 
     def _jaccard_store(self):
         return {threshold: [defaultdict(list) for _ in range(3)]
                 for threshold in self.hps.thresholds}
 
     def _update_jaccard(self, tp_fp_fn, mask, pred):
+        assert len(mask.shape) == len(pred.shape)
+        assert len(mask.shape) in {3, 4}
         for threshold, (tp, fp, fn) in tp_fp_fn.items():
             for cls in range(self.hps.n_classes):
-                pos_pred = pred[:, :, cls] >= threshold
-                pos_mask = mask[:, :, cls] == 1
+                if len(mask.shape) == 4:
+                    cls_pred = pred[:, :, :, cls]
+                    cls_mask = mask[:, :, :, cls]
+                else:
+                    cls_pred = pred[:, :, cls]
+                    cls_mask = mask[:, :, cls]
+                pos_pred = cls_pred >= threshold
+                pos_mask = cls_mask == 1
                 tp[cls].append(( pos_pred &  pos_mask).sum())
                 fp[cls].append(( pos_pred & ~pos_mask).sum())
                 fn[cls].append((~pos_pred &  pos_mask).sum())
