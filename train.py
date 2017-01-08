@@ -208,8 +208,8 @@ class Model:
                 mask = im.mask[x - m: x + s + m, y - m: y + s + m, :]
                 # TODO - mirror flips
                 angle = random.random() * 360
-                patch = utils.rotated(patch, angle)
-                mask = utils.rotated(mask, angle)
+                patch = utils.rotated(patch.astype(np.float32), angle)
+                mask = utils.rotated(mask.astype(np.float32), angle)
                 inputs.append(patch[m: -m, m: -m, :])
                 outputs.append(mask[m: -m, m: -m, :])
                 # TODO - check that they are still aligned
