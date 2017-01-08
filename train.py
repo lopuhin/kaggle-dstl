@@ -161,7 +161,7 @@ class Model:
             4243.25847972, 4473.47956815, 4178.84648439, 3708.16482918,
             2887.49330138, 2589.61786722, 2525.53347208, 2417.23798598],
             dtype=np.float32)
-        return (im_data - mean) / std
+        return ((im_data - mean) / std).astype(np.float16)
 
     def load_image(self, im_id: str) -> Image:
         logger.info('Loading {}'.format(im_id))
