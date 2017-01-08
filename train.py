@@ -33,7 +33,7 @@ class HyperParams:
     patch_inner = attr.ib(default=32)
     patch_border = attr.ib(default=16)
 
-    dropout_keep_prob = attr.ib(default=0.5)
+    dropout_keep_prob = attr.ib(default=0.0)
     size1 = attr.ib(default=3)
     filters1 = attr.ib(default=64)
     size2 = attr.ib(default=3)
@@ -161,13 +161,16 @@ class Model:
         with sv.managed_session() as sess:
             for n_epoch in range(self.hps.n_epochs):
                 logger.info('Epoch {}, training'.format(n_epoch + 1))
-                self.train_on_images(train_images, sv, sess)
-                if valid_images is None:
-                    valid_images = [self.load_image(im_id)
-                                    for im_id in sorted(valid_ids)]
-                if valid_images:
-                    logger.info('Epoch {}, validation'.format(n_epoch + 1))
-                    self.validate_on_images(valid_images, sv, sess)
+                subsample = 10
+                for _ in range(subsample):
+                    self.train_on_images(train_images, sv, sess,
+                                         subsample=subsample)
+                    if valid_images is None:
+                        valid_images = [self.load_image(im_id)
+                                        for im_id in sorted(valid_ids)]
+                    if valid_images:
+                        self.validate_on_images(valid_images, sv, sess,
+                                                subsample=subsample)
 
     def preprocess_image(self, im_data: np.ndarray) -> np.ndarray:
         # mean = np.mean(im_data, axis=(0, 1))
@@ -212,7 +215,8 @@ class Model:
         return Image(im_id, im_data, mask)
 
     def train_on_images(self, train_images: List[Image],
-                        sv: tf.train.Supervisor, sess: tf.Session):
+                        sv: tf.train.Supervisor, sess: tf.Session,
+                        subsample: int=1):
         b = self.hps.patch_border
         s = self.hps.patch_inner
         # Extra margin for rotation
@@ -220,7 +224,7 @@ class Model:
         mb = m + b  # full margin
         avg_area = np.mean(
             [im.data.shape[0] * im.data.shape[1] for im in train_images])
-        n_batches = int(avg_area / (s + b) / self.hps.batch_size / 3)
+        n_batches = int(avg_area / (s + b) / self.hps.batch_size / subsample)
 
         def gen_batch(_):
             inputs, outputs = [], []
@@ -251,14 +255,14 @@ class Model:
 
         def log():
             logger.info(
-                'Loss: {loss:.3f}, speed: {speed:,} patches/s, '
-                'Jaccard: {jaccard}'.format(
+                'Train loss: {loss:.3f}, Jaccard: {jaccard}, '
+                'speed: {speed:,} patches/s'.format(
                     loss=np.mean(losses),
                     speed=int(len(losses) * self.hps.batch_size / dt),
                     jaccard=self._format_jaccard(tp_fp_fn),
                 ))
 
-        t0 = t00 = time.time()
+        t0 = time.time()
         with ThreadPool(processes=4) as pool:
             for i, feed_dict in enumerate(pool.imap_unordered(
                     gen_batch, range(n_batches), chunksize=16)):
@@ -275,7 +279,8 @@ class Model:
                 if 'summary' in fetched:
                     sv.summary_computed(sess, fetched['summary'])
                 t1 = time.time()
-                if t1 - t0 > 10:
+                dt = t1 - t0
+                if dt > 10:
                     log()
                     losses = []
                     tp_fp_fn = self._jaccard_store()
@@ -334,17 +339,20 @@ class Model:
             in sorted(tp_fp_fn.items()))
 
     def validate_on_images(self, valid_images: List[Image],
-                           sv: tf.train.Supervisor, sess: tf.Session):
+                           sv: tf.train.Supervisor, sess: tf.Session,
+                           subsample: int=1):
         b = self.hps.patch_border
         s = self.hps.patch_inner
         losses = []
         tp_fp_fn = self._jaccard_store()
         for im in valid_images:
-            logger.info(im.id)
             w, h = im.data.shape[:2]
             xs = range(b, w - (b + s), s)
             ys = range(b, h - (b + s), s)
             all_xy = [(x, y) for x in xs for y in ys]
+            if subsample != 1:
+                random.shuffle(all_xy)
+                all_xy = all_xy[:len(all_xy) // subsample]
             pred_mask = np.zeros([w, h, self.hps.n_classes])
             for xy_batch in utils.chunks(all_xy, self.hps.batch_size):
                 inputs = np.array([im.data[x - b: x + s + b,
@@ -359,10 +367,10 @@ class Model:
                 losses.append(cls_losses)
                 for (x, y), mask in zip(xy_batch, pred):
                     pred_mask[x: x + s, y: y + s, :] = mask
-            self._update_jaccard(tp_fp_fn, im.mask, pred_mask)
+                self._update_jaccard(tp_fp_fn, outputs, pred)
         losses = np.array(losses)
         loss = np.mean(losses)
-        logger.info('Validation loss: {:.3f}, jaccard: {}'.format(
+        logger.info('Valid loss: {:.3f}, Jaccard: {}'.format(
             loss, self._format_jaccard(tp_fp_fn)))
         self._log_summary('valid-loss/average', loss, sv, sess)
         for cls in range(self.hps.n_classes):
