@@ -33,10 +33,14 @@ class HyperParams:
     patch_inner = attr.ib(default=32)
     patch_border = attr.ib(default=16)
 
-    size0 = attr.ib(default=5)
-    filters0 = attr.ib(default=64)
-    size1 = attr.ib(default=5)
+    dropout_keep_prob = attr.ib(default=0.5)
+    size1 = attr.ib(default=3)
     filters1 = attr.ib(default=64)
+    size2 = attr.ib(default=3)
+    filters2 = attr.ib(default=64)
+    size3 = attr.ib(default=3)
+    filters3 = attr.ib(default=64)
+    size4 = attr.ib(default=5)
 
     n_epochs = attr.ib(default=10)
     learning_rate = attr.ib(default=0.0001)
@@ -68,22 +72,43 @@ class Model:
             tf.float32, [None, hps.patch_size, hps.patch_size, hps.n_channels])
         self.y = tf.placeholder(
             tf.float32, [None, hps.patch_inner, hps.patch_inner, hps.n_classes])
+        self.dropout_keep_prob = tf.placeholder(tf.float32, [])
 
-        w0 = tf.get_variable(
-            'w0', shape=[hps.size0, hps.size0, hps.n_channels, hps.filters0])
-        b0 = tf.get_variable(
-            'b0', shape=[hps.filters0], initializer=tf.zeros_initializer)
         conv2d = lambda _x, _w: tf.nn.conv2d(
             _x, _w, strides=[1, 1, 1, 1], padding='SAME')
-        x0 = tf.nn.relu(conv2d(self.x, w0) + b0)
 
         w1 = tf.get_variable(
-            'w1', shape=[hps.size1, hps.size1, hps.filters1, hps.n_classes])
+            'w1', shape=[hps.size1, hps.size1, hps.n_channels, hps.filters1])
         b1 = tf.get_variable(
-            'b1', shape=[hps.n_classes], initializer=tf.zeros_initializer)
-        x1 = conv2d(x0, w1) + b1
+            'b1', shape=[hps.filters1], initializer=tf.zeros_initializer)
+        x = tf.nn.relu(conv2d(self.x, w1) + b1)
+
+        w2 = tf.get_variable(
+            'w2', shape=[hps.size2, hps.size2, hps.filters1, hps.filters2])
+        b2 = tf.get_variable(
+            'b2', shape=[hps.filters2], initializer=tf.zeros_initializer)
+        x = tf.nn.relu(conv2d(x, w2) + b2)
+
+        if hps.dropout_keep_prob:
+            x = tf.nn.dropout(x, keep_prob=self.dropout_keep_prob)
+
+        w3 = tf.get_variable(
+            'w3', shape=[hps.size3, hps.size3, hps.filters2, hps.filters3])
+        b3 = tf.get_variable(
+            'b3', shape=[hps.filters3], initializer=tf.zeros_initializer)
+        x = tf.nn.relu(conv2d(x, w3) + b3)
+
+        if hps.dropout_keep_prob:
+            x = tf.nn.dropout(x, keep_prob=self.dropout_keep_prob)
+
+        w4 = tf.get_variable(
+            'w4', shape=[hps.size4, hps.size4, hps.filters3, hps.n_classes])
+        b4 = tf.get_variable(
+            'b4', shape=[hps.n_classes], initializer=tf.zeros_initializer)
+        x = conv2d(x, w4) + b4
+
         b = hps.patch_border
-        x_logits = x1[:, b:-b, b:-b, :]
+        x_logits = x[:, b:-b, b:-b, :]
         self.pred = tf.nn.sigmoid(x_logits)
         self.add_image_summaries()
         losses = tf.nn.sigmoid_cross_entropy_with_logits(x_logits, self.y)
@@ -195,7 +220,7 @@ class Model:
         mb = m + b  # full margin
         avg_area = np.mean(
             [im.data.shape[0] * im.data.shape[1] for im in train_images])
-        n_batches = int(avg_area / (s + b) / self.hps.batch_size)
+        n_batches = int(avg_area / (s + b) / self.hps.batch_size / 3)
 
         def gen_batch(_):
             inputs, outputs = [], []
@@ -213,7 +238,9 @@ class Model:
                 inputs.append(patch[m: -m, m: -m, :])
                 outputs.append(mask[m: -m, m: -m, :])
                 # TODO - check that they are still aligned
-            return {self.x: np.array(inputs), self.y: np.array(outputs)}
+            return {self.x: np.array(inputs),
+                    self.y: np.array(outputs),
+                    self.dropout_keep_prob: self.hps.dropout_keep_prob}
 
         self._train_on_feeds(gen_batch, n_batches, sv=sv, sess=sess)
 
@@ -311,13 +338,14 @@ class Model:
             ys = range(b, h - (b + s), s)
             all_xy = [(x, y) for x in xs for y in ys]
             pred_mask = np.zeros([w, h, self.hps.n_classes])
-            for xy_batch in utils.chunks(all_xy, 16 * self.hps.batch_size):
+            for xy_batch in utils.chunks(all_xy, self.hps.batch_size):
                 inputs = np.array([im.data[x - b: x + s + b,
                                            y - b: y + s + b, :]
                                    for x, y in xy_batch])
                 outputs = np.array([im.mask[x: x + s, y: y + s, :]
                                     for x, y in xy_batch])
-                feed_dict = {self.x: inputs, self.y: outputs}
+                feed_dict = {self.x: inputs, self.y: outputs,
+                             self.dropout_keep_prob: 1.0}
                 cls_losses, pred = sess.run([
                     self.cls_losses, self.pred], feed_dict)
                 losses.append(cls_losses)
@@ -343,11 +371,11 @@ class Model:
         ys = range(b, h - (b + s), s)
         all_xy = [(x, y) for x in xs for y in ys]
         pred_mask = np.zeros([w, h, self.hps.n_classes])
-        for xy_batch in utils.chunks(all_xy, 16 * self.hps.batch_size):
+        for xy_batch in utils.chunks(all_xy, self.hps.batch_size):
             inputs = np.array([im.data[x - b: x + s + b,
                                        y - b: y + s + b, :]
                                for x, y in xy_batch])
-            feed_dict = {self.x: inputs}
+            feed_dict = {self.x: inputs, self.dropout_keep_prob: 1.0}
             pred = sess.run(self.pred, feed_dict)
             for (x, y), mask in zip(xy_batch, pred):
                 pred_mask[x: x + s, y: y + s, :] = mask
