@@ -27,7 +27,8 @@ logger.addHandler(ch)
 @attr.s(slots=True)
 class HyperParams:
     n_channels = attr.ib(default=20)
-    n_classes = attr.ib(default=10)
+    classes = attr.ib(default=range(10))
+    total_classes = 10
     thresholds = attr.ib(default=[0.3, 0.4, 0.5])
 
     patch_inner = attr.ib(default=32)
@@ -47,14 +48,19 @@ class HyperParams:
     batch_size = attr.ib(default=128)
 
     @property
-    def patch_size(self):
-        return self.patch_border * 2 + self.patch_inner
+    def n_classes(self):
+        return len(self.classes)
 
     def update(self, hps_string: str):
         if hps_string:
-            for pair in hps_string.split(','):
+            for pair in hps_string.split(';'):
                 k, v = pair.split('=')
-                v = float(v) if '.' in v else int(v)
+                if k == 'classes':
+                    v = [int(cls) for cls in v.split(',')]
+                elif '.' in v:
+                    v = float(v)
+                else:
+                    v = int(v)
                 setattr(self, k, v)
 
 
@@ -68,8 +74,9 @@ class Image:
 class Model:
     def __init__(self, hps: HyperParams):
         self.hps = hps
+        patch_size = 2 * hps.patch_border + hps.patch_inner
         self.x = tf.placeholder(
-            tf.float32, [None, hps.patch_size, hps.patch_size, hps.n_channels])
+            tf.float32, [None, patch_size, patch_size, hps.n_channels])
         self.y = tf.placeholder(
             tf.float32, [None, hps.patch_inner, hps.patch_inner, hps.n_classes])
         self.dropout_keep_prob = tf.placeholder(tf.float32, [])
@@ -208,10 +215,12 @@ class Model:
             poly_by_type = utils.load_polygons(im_id, im_size)
             mask = np.array(
                 [utils.mask_for_polygons(im_size, poly_by_type[poly_type + 1])
-                 for poly_type in range(self.hps.n_classes)],
+                 for poly_type in range(self.hps.total_classes)],
                 dtype=np.uint8).transpose([1, 2, 0])
             with open(mask_filename, 'wb') as f:
                 np.save(f, mask)
+        if self.hps.n_classes != self.hps.total_classes:
+            mask = np.stack([mask[:, :, cls] for cls in self.hps.classes], 2)
         return Image(im_id, im_data, mask)
 
     def train_on_images(self, train_images: List[Image],
@@ -312,10 +321,10 @@ class Model:
     def _log_jaccard(self, tp_fp_fn, sv, sess, prefix=''):
         for threshold, (tp, fp, fn) in tp_fp_fn.items():
             jaccards = []
-            for cls in range(self.hps.n_classes):
+            for cls, cls_name in enumerate(self.hps.classes):
                 jaccard = self._cls_jaccard(tp, fp, fn, cls)
                 self._log_summary(
-                    '{}jaccard-{}/cls-{}'.format(prefix, threshold, cls),
+                    '{}jaccard-{}/cls-{}'.format(prefix, threshold, cls_name),
                     jaccard, sv, sess)
                 jaccards.append(jaccard)
             self._log_summary(
@@ -373,8 +382,8 @@ class Model:
         logger.info('Valid loss: {:.3f}, Jaccard: {}'.format(
             loss, self._format_jaccard(tp_fp_fn)))
         self._log_summary('valid-loss/average', loss, sv, sess)
-        for cls in range(self.hps.n_classes):
-            self._log_summary('valid-loss/cls-{}'.format(cls),
+        for cls, cls_name in enumerate(self.hps.classes):
+            self._log_summary('valid-loss/cls-{}'.format(cls_name),
                               np.mean(losses[:, cls]), sv, sess)
         self._log_jaccard(tp_fp_fn, sv, sess, prefix='valid-')
 
@@ -409,7 +418,7 @@ def main():
     parser = argparse.ArgumentParser()
     arg = parser.add_argument
     arg('logdir', type=str, help='Path to log directory')
-    arg('--hps', type=str, help='Change hyperparameters in k1=v1,k2=v2 format')
+    arg('--hps', type=str, help='Change hyperparameters in k1=v1;k2=v2 format')
     arg('--all', action='store_true',
         help='Train on all images without validation')
     arg('--only', type=str,

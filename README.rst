@@ -6,16 +6,16 @@ https://www.kaggle.com/c/dstl-satellite-imagery-feature-detection/
 Object types
 ------------
 
-- 1: Buildings - large building, residential, non-residential, fuel storage facility, fortified building
-- 2: Misc. Manmade structures
-- 3: Road
-- 4: Track - poor/dirt/cart track, footpath/trail
-- 5: Trees - woodland, hedgerows, groups of trees, standalone trees
-- 6: Crops - contour ploughing/cropland, grain (wheat) crops, row (potatoes, turnips) crops
-- 7: Waterway
-- 8: Standing water
-- 9: Vehicle Large - large vehicle (e.g. lorry, truck,bus), logistics vehicle
-- 10: Vehicle Small - small vehicle (car, van), motorbike
+- 0: Buildings - large building, residential, non-residential, fuel storage facility, fortified building
+- 1: Misc. Manmade structures
+- 2: Road
+- 3: Track - poor/dirt/cart track, footpath/trail
+- 4: Trees - woodland, hedgerows, groups of trees, standalone trees
+- 5: Crops - contour ploughing/cropland, grain (wheat) crops, row (potatoes, turnips) crops
+- 6: Waterway
+- 7: Standing water
+- 8: Vehicle Large - large vehicle (e.g. lorry, truck,bus), logistics vehicle
+- 9: Vehicle Small - small vehicle (car, van), motorbike
 
 
 Making submission
