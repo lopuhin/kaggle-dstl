@@ -39,8 +39,10 @@ def get_wkt_data() -> Dict[str, Dict[int, str]]:
     return _wkt_data
 
 
-def load_image(im_id: str) -> np.ndarray:
+def load_image(im_id: str, rgb_only=False) -> np.ndarray:
     im_rgb = tiff.imread('./three_band/{}.tif'.format(im_id)).transpose([1, 2, 0])
+    if rgb_only:
+        return im_rgb
     im_p = tiff.imread('sixteen_band/{}_P.tif'.format(im_id))
     im_m = tiff.imread('sixteen_band/{}_M.tif'.format(im_id)).transpose([1, 2, 0])
     im_a = tiff.imread('sixteen_band/{}_A.tif'.format(im_id)).transpose([1, 2, 0])
