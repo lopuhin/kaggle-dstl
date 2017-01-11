@@ -51,6 +51,10 @@ class HyperParams:
     def n_classes(self):
         return len(self.classes)
 
+    @property
+    def has_all_classes(self):
+        return self.n_classes == self.total_classes
+
     def update(self, hps_string: str):
         if hps_string:
             for pair in hps_string.split(';'):
@@ -119,8 +123,8 @@ class Model:
         self.pred = tf.nn.sigmoid(x_logits)
         self.add_image_summaries()
         losses = tf.nn.sigmoid_cross_entropy_with_logits(x_logits, self.y)
-        self.cls_losses = [tf.reduce_mean(losses[:, :, :, cls])
-                           for cls in range(hps.n_classes)]
+        self.cls_losses = [tf.reduce_mean(losses[:, :, :, cls_idx])
+                           for cls_idx in range(hps.n_classes)]
         self.loss = tf.reduce_mean(losses)
         self.add_loss_summaries()
         self.global_step = tf.Variable(0, name='global_step', trainable=False)
@@ -130,9 +134,11 @@ class Model:
         self.summary_op = tf.summary.merge_all()
 
     def add_loss_summaries(self):
-        tf.summary.scalar('loss/average', self.loss)
-        for cls, loss in enumerate(self.cls_losses):
-            tf.summary.scalar('loss/cls-{}'.format(cls), loss)
+        if self.hps.has_all_classes:
+            tf.summary.scalar('loss/average', self.loss)
+        for cls_idx, loss in enumerate(self.cls_losses):
+            tf.summary.scalar(
+                'loss/cls-{}'.format(self.hps.classes[cls_idx]), loss)
 
     def add_image_summaries(self):
         b = self.hps.patch_border
@@ -148,10 +154,10 @@ class Model:
         mark = np.zeros([s, s], dtype=np.float32)
         mark[0, 0] = 1
         mark_t = tf.pack(self.hps.batch_size * [tf.constant(mark)])
-        for cls in range(self.hps.n_classes):
+        for cls_idx in range(self.hps.n_classes):
             images.append(
                 tf.concat(1, [
-                    tf.pack(3 * [tf.maximum(im[:, :, :, cls], mark_t)], axis=3)
+                    tf.pack(3 * [tf.maximum(im[:, :, :, cls_idx], mark_t)], axis=3)
                     for im in [self.y, self.pred]]))
         tf.summary.image('image', tf.concat(2, images), max_outputs=8)
 
@@ -219,7 +225,7 @@ class Model:
                 dtype=np.uint8).transpose([1, 2, 0])
             with open(mask_filename, 'wb') as f:
                 np.save(f, mask)
-        if self.hps.n_classes != self.hps.total_classes:
+        if not self.hps.has_all_classes:
             mask = np.stack([mask[:, :, cls] for cls in self.hps.classes], 2)
         return Image(im_id, im_data, mask)
 
@@ -305,13 +311,13 @@ class Model:
         assert len(mask.shape) == len(pred.shape)
         assert len(mask.shape) in {3, 4}
         for threshold, (tp, fp, fn) in tp_fp_fn.items():
-            for cls in range(self.hps.n_classes):
+            for cls_idx, cls in enumerate(self.hps.classes):
                 if len(mask.shape) == 4:
-                    cls_pred = pred[:, :, :, cls]
-                    cls_mask = mask[:, :, :, cls]
+                    cls_pred = pred[:, :, :, cls_idx]
+                    cls_mask = mask[:, :, :, cls_idx]
                 else:
-                    cls_pred = pred[:, :, cls]
-                    cls_mask = mask[:, :, cls]
+                    cls_pred = pred[:, :, cls_idx]
+                    cls_mask = mask[:, :, cls_idx]
                 pos_pred = cls_pred >= threshold
                 pos_mask = cls_mask == 1
                 tp[cls].append(( pos_pred &  pos_mask).sum())
@@ -321,19 +327,20 @@ class Model:
     def _log_jaccard(self, tp_fp_fn, sv, sess, prefix=''):
         for threshold, (tp, fp, fn) in tp_fp_fn.items():
             jaccards = []
-            for cls, cls_name in enumerate(self.hps.classes):
+            for cls in self.hps.classes:
                 jaccard = self._cls_jaccard(tp, fp, fn, cls)
                 self._log_summary(
-                    '{}jaccard-{}/cls-{}'.format(prefix, threshold, cls_name),
+                    '{}jaccard-{}/cls-{}'.format(prefix, threshold, cls),
                     jaccard, sv, sess)
                 jaccards.append(jaccard)
-            self._log_summary(
-                '{}jaccard-{}/average'.format(prefix, threshold),
-                np.mean(jaccards), sv, sess)
+            if self.hps.has_all_classes:
+                self._log_summary(
+                    '{}jaccard-{}/average'.format(prefix, threshold),
+                    np.mean(jaccards), sv, sess)
 
     def _jaccard(self, tp, fp, fn):
         return np.mean([self._cls_jaccard(tp, fp, fn, cls)
-                        for cls in range(self.hps.n_classes)])
+                        for cls in self.hps.classes])
 
     def _cls_jaccard(self, tp, fp, fn, cls):
         if sum(tp[cls]) == 0:
@@ -381,7 +388,8 @@ class Model:
         loss = np.mean(losses)
         logger.info('Valid loss: {:.3f}, Jaccard: {}'.format(
             loss, self._format_jaccard(tp_fp_fn)))
-        self._log_summary('valid-loss/average', loss, sv, sess)
+        if self.hps.has_all_classes:
+            self._log_summary('valid-loss/average', loss, sv, sess)
         for cls, cls_name in enumerate(self.hps.classes):
             self._log_summary('valid-loss/cls-{}'.format(cls_name),
                               np.mean(losses[:, cls]), sv, sess)
