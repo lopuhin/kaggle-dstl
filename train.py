@@ -42,7 +42,7 @@ class HyperParams:
     size3 = attr.ib(default=5)
     filters3 = attr.ib(default=64)
     size4 = attr.ib(default=7)
-    jaccard_loss = attr.ib(default=False)
+    jaccard_loss = attr.ib(default=0)
 
     n_epochs = attr.ib(default=10)
     learning_rate = attr.ib(default=0.0001)
@@ -132,7 +132,7 @@ class Model:
             intersection = tf.minimum(self.pred, self.y)
             union = tf.maximum(self.pred, self.y)
             iou = tf.reduce_mean(intersection / (union + 0.0000001))
-            self.loss += 10 * (1 - tf.reduce_mean(iou))
+            self.loss += hps.jaccard_loss * (1 - tf.reduce_mean(iou))
 
         self.global_step = tf.Variable(0, name='global_step', trainable=False)
         optimizer = tf.train.AdamOptimizer(learning_rate=hps.learning_rate)
