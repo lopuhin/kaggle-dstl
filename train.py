@@ -160,7 +160,11 @@ class Model:
         border_t = tf.pack(self.hps.batch_size * [tf.constant(border)])
         # TODO: would be cool to add other channels as well
         # TODO: fix image color range
-        images = [tf.maximum(self.x[:, :, :, :3], border_t)]
+        rgb = self.x[:, :, :, :3]
+        channel_min = tf.reduce_min(rgb, axis=[0, 1, 2])
+        channel_max = tf.reduce_max(rgb, axis=[0, 1, 2])
+        rgb = (rgb - channel_min) / (channel_max - channel_min)
+        images = [tf.maximum(rgb, border_t)]
         mark = np.zeros([s, s], dtype=np.float32)
         mark[0, 0] = 1
         mark_t = tf.pack(self.hps.batch_size * [tf.constant(mark)])
