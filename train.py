@@ -35,13 +35,13 @@ class HyperParams:
     patch_border = attr.ib(default=16)
 
     dropout_keep_prob = attr.ib(default=0.0)
-    size1 = attr.ib(default=3)
+    size1 = attr.ib(default=5)
     filters1 = attr.ib(default=64)
-    size2 = attr.ib(default=3)
+    size2 = attr.ib(default=5)
     filters2 = attr.ib(default=64)
-    size3 = attr.ib(default=3)
+    size3 = attr.ib(default=5)
     filters3 = attr.ib(default=64)
-    size4 = attr.ib(default=5)
+    size4 = attr.ib(default=7)
 
     n_epochs = attr.ib(default=10)
     learning_rate = attr.ib(default=0.0001)
