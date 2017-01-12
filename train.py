@@ -46,6 +46,7 @@ class HyperParams:
     jaccard_loss = attr.ib(default=0)
 
     n_epochs = attr.ib(default=10)
+    oversample = attr.ib(default=0.0)
     learning_rate = attr.ib(default=0.0001)
     batch_size = attr.ib(default=128)
 
@@ -259,10 +260,13 @@ class Model:
         def gen_batch(_):
             inputs, outputs = [], []
             for _ in range(self.hps.batch_size):
-                im = random.choice(train_images)
-                w, h = im.data.shape[:2]
-                x, y = (random.randint(mb, w - (mb + s)),
-                        random.randint(mb, h - (mb + s)))
+                im, (x, y) = self.sample_im_xy(train_images)
+                if random.random() < self.hps.oversample:
+                    # TODO - something less stupid?
+                    for _ in range(100):
+                        if im.mask[x - m: x + s + m, y - m: y + s + m].sum():
+                            break
+                        im, (x, y) = self.sample_im_xy(train_images)
                 patch = im.data[x - mb: x + s + mb, y - mb: y + s + mb, :]
                 mask = im.mask[x - m: x + s + m, y - m: y + s + m, :]
                 # TODO - mirror flips
@@ -271,12 +275,22 @@ class Model:
                 mask = utils.rotated(mask.astype(np.float32), angle)
                 inputs.append(patch[m: -m, m: -m, :])
                 outputs.append(mask[m: -m, m: -m, :])
-                # TODO - check that they are still aligned
             return {self.x: np.array(inputs),
                     self.y: np.array(outputs),
                     self.dropout_keep_prob: self.hps.dropout_keep_prob}
 
         self._train_on_feeds(gen_batch, n_batches, sv=sv, sess=sess)
+
+    def sample_im_xy(self, train_images):
+        b = self.hps.patch_border
+        s = self.hps.patch_inner
+        # Extra margin for rotation
+        m = int(np.ceil((np.sqrt(2) - 1) * (b + s / 2)))
+        mb = m + b  # full margin
+        im = random.choice(train_images)
+        w, h = im.data.shape[:2]
+        return im, (random.randint(mb, w - (mb + s)),
+                    random.randint(mb, h - (mb + s)))
 
     def _train_on_feeds(self, gen_batch: Callable[[int], Dict], n_batches: int,
                         sv: tf.train.Supervisor, sess: tf.Session):
