@@ -30,7 +30,7 @@ class HyperParams:
     n_channels = attr.ib(default=20)
     classes = attr.ib(default=range(10))
     total_classes = 10
-    thresholds = attr.ib(default=[0.3, 0.4, 0.5])
+    thresholds = attr.ib(default=[0.2, 0.3, 0.4, 0.5])
 
     patch_inner = attr.ib(default=32)
     patch_border = attr.ib(default=16)
