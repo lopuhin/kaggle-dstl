@@ -458,6 +458,7 @@ def main():
     arg('--hps', type=str, help='Change hyperparameters in k1=v1;k2=v2 format')
     arg('--all', action='store_true',
         help='Train on all images without validation')
+    arg('--stratified', action='store_true', help='stratified train/valid split')
     arg('--only', type=str,
         help='Train on this image ids only (comma-separated) without validation')
     args = parser.parse_args()
@@ -468,20 +469,39 @@ def main():
         json.dumps(attr.asdict(hps)))
 
     model = Model(hps=hps)
-    all_img_ids = list(utils.get_wkt_data())
+    all_im_ids = list(utils.get_wkt_data())
     valid_ids = []
+    bad_pairs = [('6110', '6140'),
+                 ('6020', '6130'),
+                 ('6030', '6150')]
     if args.only:
         train_ids = args.only.split(',')
     elif args.all:
-        train_ids = all_img_ids
+        train_ids = all_im_ids
+    elif args.stratified:
+        mask_stats = utils.load_mask_stats()
+        im_area = [
+            (im_id, sum(mask_stats[im_id][cls]['area'] for cls in hps.classes))
+            for im_id in all_im_ids]
+        im_area.sort(key=lambda x: (x[1], x[0]), reverse=True)
+        train_ids, valid_ids = [], []
+        for idx, (im_id, _) in enumerate(im_area):
+            (valid_ids if (idx % 4 == 1) else train_ids).append(im_id)
+        # TODO - recover
+        for a, b in bad_pairs:
+            if a in valid_ids and b in valid_ids:
+                assert False
+            if a in train_ids and b in train_ids:
+                assert False
     else:
         # Fix for images of the same place in different seasons
-        labels = [im_id.replace('6110', '6140')
-                       .replace('6020', '6130')
-                       .replace('6030', '6150')
-                  for im_id in all_img_ids]
-        train_ids, valid_ids = [[all_img_ids[idx] for idx in g] for g in next(
-            GroupShuffleSplit(random_state=1).split(all_img_ids, groups=labels))]
+        labels = []
+        for im_id in all_im_ids:
+            for pair in bad_pairs:
+                im_id = im_id.replace(*pair)
+            labels.append(im_id)
+        train_ids, valid_ids = [[all_im_ids[idx] for idx in g] for g in next(
+            GroupShuffleSplit(random_state=1).split(all_im_ids, groups=labels))]
         logger.info('Train: {}'.format(' '.join(sorted(train_ids))))
         logger.info('Valid: {}'.format(' '.join(sorted(valid_ids))))
     model.train(logdir=args.logdir, train_ids=train_ids, valid_ids=valid_ids)

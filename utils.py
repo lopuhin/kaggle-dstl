@@ -1,6 +1,7 @@
 import csv
 from collections import defaultdict
 from itertools import islice
+import json
 from typing import Dict, Tuple
 import sys
 
@@ -174,3 +175,8 @@ def mask_to_polygons(mask: np.ndarray, epsilon=5., min_area=10.)\
         if all_polygons.type == 'Polygon':
             all_polygons = MultiPolygon([all_polygons])
     return all_polygons
+
+
+def load_mask_stats():
+    with open('images/stats.json') as f:
+        return json.load(f)
