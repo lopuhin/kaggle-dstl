@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 from collections import defaultdict
+import json
 import logging
 from pathlib import Path
 from multiprocessing.pool import ThreadPool
@@ -448,6 +449,9 @@ def main():
     args = parser.parse_args()
     hps = HyperParams()
     hps.update(args.hps)
+    Path(args.logdir).mkdir(exist_ok=True)
+    Path(args.logdir).joinpath('hps.json').write_text(
+        json.dumps(attr.asdict(hps)))
 
     model = Model(hps=hps)
     all_img_ids = list(utils.get_wkt_data())
