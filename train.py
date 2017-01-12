@@ -42,6 +42,7 @@ class HyperParams:
     size3 = attr.ib(default=5)
     filters3 = attr.ib(default=64)
     size4 = attr.ib(default=7)
+    jaccard_loss = attr.ib(default=False)
 
     n_epochs = attr.ib(default=10)
     learning_rate = attr.ib(default=0.0001)
@@ -121,16 +122,25 @@ class Model:
         b = hps.patch_border
         x_logits = x[:, b:-b, b:-b, :]
         self.pred = tf.nn.sigmoid(x_logits)
-        self.add_image_summaries()
+
         losses = tf.nn.sigmoid_cross_entropy_with_logits(x_logits, self.y)
         self.cls_losses = [tf.reduce_mean(losses[:, :, :, cls_idx])
                            for cls_idx in range(hps.n_classes)]
         self.loss = tf.reduce_mean(losses)
-        self.add_loss_summaries()
+
+        if hps.jaccard_loss:
+            intersection = tf.minimum(self.pred, self.y)
+            union = tf.maximum(self.pred, self.y)
+            iou = tf.reduce_mean(intersection / (union + 0.0000001))
+            self.loss += 10 * (1 - tf.reduce_mean(iou))
+
         self.global_step = tf.Variable(0, name='global_step', trainable=False)
         optimizer = tf.train.AdamOptimizer(learning_rate=hps.learning_rate)
         self.train_op = optimizer.minimize(
             self.loss * hps.batch_size, self.global_step)
+
+        self.add_loss_summaries()
+        self.add_image_summaries()
         self.summary_op = tf.summary.merge_all()
 
     def add_loss_summaries(self):
