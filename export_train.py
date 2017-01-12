@@ -31,17 +31,21 @@ def main():
                 str(output.joinpath('{}_mask_{}.png'.format(im_id, poly_type))),
                 255 * mask)
             poly_stats.setdefault(im_id, {})[poly_type] = {
-                'area': poly.area,
-                'perimeter': poly.length,
+                'area': poly.area / (im_size[0] * im_size[1]),
+                'perimeter': int(poly.length),
                 'number': len(poly),
             }
 
     output.joinpath('stats.json').write_text(json.dumps(poly_stats))
 
     for key in ['number', 'perimeter', 'area']:
+        if key == 'area':
+            fmt = '{:.4%}'.format
+        else:
+            fmt = lambda x: x
         print('\n{}'.format(key))
         print(tabulate.tabulate(
-            [[im_id] + [int(s[poly_type][key]) for poly_type in range(10)]
+            [[im_id] + [fmt(s[poly_type][key]) for poly_type in range(10)]
              for im_id, s in sorted(poly_stats.items())],
             headers=['im_id'] + list(range(10))))
 
