@@ -452,7 +452,6 @@ def main():
             GroupShuffleSplit(random_state=1).split(all_img_ids, groups=labels))]
         logger.info('Train: {}'.format(' '.join(sorted(train_ids))))
         logger.info('Valid: {}'.format(' '.join(sorted(valid_ids))))
-    random.seed(0)
     model.train(logdir=args.logdir, train_ids=train_ids, valid_ids=valid_ids)
 
 
