@@ -31,7 +31,7 @@ class HyperParams:
     n_channels = attr.ib(default=20)
     classes = attr.ib(default=range(10))
     total_classes = 10
-    thresholds = attr.ib(default=[0.2, 0.3, 0.4, 0.5])
+    thresholds = attr.ib(default=[0.2, 0.3, 0.4, 0.5, 0.6])
 
     patch_inner = attr.ib(default=32)
     patch_border = attr.ib(default=16)
@@ -483,12 +483,18 @@ def main():
     elif args.stratified:
         mask_stats = utils.load_mask_stats()
         im_area = [
-            (im_id, sum(mask_stats[im_id][cls]['area'] for cls in hps.classes))
+            (im_id, sum(mask_stats[im_id][str(cls)]['area']
+                        for cls in hps.classes))
             for im_id in all_im_ids]
         im_area.sort(key=lambda x: (x[1], x[0]), reverse=True)
         train_ids, valid_ids = [], []
         for idx, (im_id, _) in enumerate(im_area):
             (valid_ids if (idx % 4 == 1) else train_ids).append(im_id)
+        area_by_id = dict(im_area)
+        logger.info('Train area mean: {}'.format(
+            np.mean([area_by_id[im_id] for im_id in valid_ids])))
+        logger.info('Valid area mean: {}'.format(
+            np.mean([area_by_id[im_id] for im_id in train_ids])))
         # TODO - recover
         for a, b in bad_pairs:
             if a in valid_ids and b in valid_ids:
