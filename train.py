@@ -5,6 +5,7 @@ import json
 import logging
 from pathlib import Path
 from multiprocessing.pool import ThreadPool
+from pprint import pprint
 import random
 import time
 from typing import Callable, Dict, List
@@ -45,7 +46,7 @@ class HyperParams:
     size4 = attr.ib(default=7)
     jaccard_loss = attr.ib(default=0)
 
-    n_epochs = attr.ib(default=10)
+    n_epochs = attr.ib(default=30)
     oversample = attr.ib(default=0.0)
     learning_rate = attr.ib(default=0.0001)
     batch_size = attr.ib(default=128)
@@ -60,10 +61,10 @@ class HyperParams:
 
     def update(self, hps_string: str):
         if hps_string:
-            for pair in hps_string.split(';'):
+            for pair in hps_string.split(','):
                 k, v = pair.split('=')
                 if k == 'classes':
-                    v = [int(cls) for cls in v.split(',')]
+                    v = [int(cls) for cls in v.split('-')]
                 elif '.' in v:
                     v = float(v)
                 else:
@@ -311,7 +312,7 @@ class Model:
             for i, feed_dict in enumerate(pool.imap_unordered(
                     gen_batch, range(n_batches), chunksize=16)):
                 fetches = {'loss': self.loss, 'train': self.train_op}
-                if i % 20 == 0:
+                if i % 100 == 0:
                     fetches['summary'] = self.summary_op
                     fetches['pred'] = self.pred
                 fetched = sess.run(fetches, feed_dict)
@@ -455,7 +456,7 @@ def main():
     parser = argparse.ArgumentParser()
     arg = parser.add_argument
     arg('logdir', type=str, help='Path to log directory')
-    arg('--hps', type=str, help='Change hyperparameters in k1=v1;k2=v2 format')
+    arg('--hps', type=str, help='Change hyperparameters in k1=v1,k2=v2 format')
     arg('--all', action='store_true',
         help='Train on all images without validation')
     arg('--stratified', action='store_true', help='stratified train/valid split')
@@ -464,9 +465,10 @@ def main():
     args = parser.parse_args()
     hps = HyperParams()
     hps.update(args.hps)
+    pprint(attr.asdict(hps))
     Path(args.logdir).mkdir(exist_ok=True)
     Path(args.logdir).joinpath('hps.json').write_text(
-        json.dumps(attr.asdict(hps)))
+        json.dumps(attr.asdict(hps), indent=True, sort_keys=True))
 
     model = Model(hps=hps)
     all_im_ids = list(utils.get_wkt_data())
