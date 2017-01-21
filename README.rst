@@ -63,6 +63,8 @@ Train a CNN (choose number of epochs and other hyper-params running without
 
     $ ./train.py debug12-all-ep4 --all --hps n_epochs=4
 
+TODO: document train_all, choosing epsilon with make_submission --train-only
+
 Make submission file (be sure to pass hyperparameters that influence CNN structure)::
 
     $ ./make_submission.py debug12-all-ep4 sub_th0.4_debug12-all-ep4 --threshold 0.4
