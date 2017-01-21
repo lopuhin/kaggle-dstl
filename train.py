@@ -14,6 +14,7 @@ import attr
 import numpy as np
 from sklearn.model_selection import GroupShuffleSplit
 import tensorflow as tf
+import tqdm
 
 import utils
 
@@ -344,15 +345,15 @@ class Model:
             for cls_idx, cls in enumerate(self.hps.classes):
                 if len(mask.shape) == 4:
                     cls_pred = pred[:, :, :, cls_idx]
-                    cls_mask = mask[:, :, :, cls_idx]
+                    cls_true = mask[:, :, :, cls_idx]
                 else:
                     cls_pred = pred[:, :, cls_idx]
-                    cls_mask = mask[:, :, cls_idx]
-                pos_pred = cls_pred >= threshold
-                pos_mask = cls_mask == 1
-                tp[cls].append(( pos_pred &  pos_mask).sum())
-                fp[cls].append(( pos_pred & ~pos_mask).sum())
-                fn[cls].append((~pos_pred &  pos_mask).sum())
+                    cls_true = mask[:, :, cls_idx]
+                _tp, _fp, _fn = utils.mask_tp_fp_fn(
+                    cls_pred, cls_true, threshold)
+                tp[cls].append(_tp)
+                fp[cls].append(_fp)
+                fn[cls].append(_fn)
 
     def _log_jaccard(self, tp_fp_fn, sv, sess, prefix=''):
         for threshold, (tp, fp, fn) in tp_fp_fn.items():
@@ -425,7 +426,7 @@ class Model:
                               np.mean(losses[:, cls]), sv, sess)
         self._log_jaccard(tp_fp_fn, sv, sess, prefix='valid-')
 
-    def image_prediction(self, im: Image, sess: tf.Session):
+    def image_prediction(self, im: Image, sess: tf.Session) -> np.ndarray:
         # FIXME - some copy-paste
         w, h = im.data.shape[:2]
         b = self.hps.patch_border
@@ -434,7 +435,7 @@ class Model:
         ys = range(b, h - (b + s), s)
         all_xy = [(x, y) for x in xs for y in ys]
         pred_mask = np.zeros([w, h, self.hps.n_classes])
-        for xy_batch in utils.chunks(all_xy, self.hps.batch_size):
+        for xy_batch in tqdm.tqdm(list(utils.chunks(all_xy, self.hps.batch_size))):
             inputs = np.array([im.data[x - b: x + s + b,
                                        y - b: y + s + b, :]
                                for x, y in xy_batch])

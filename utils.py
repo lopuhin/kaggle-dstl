@@ -58,14 +58,16 @@ def load_image(im_id: str, rgb_only=False) -> np.ndarray:
 
 def load_polygons(im_id: str, im_size: Tuple[int, int])\
         -> Dict[int, MultiPolygon]:
+    return {
+        int(poly_type): scale_to_mask(im_id, im_size, shapely.wkt.loads(poly))
+        for poly_type, poly in get_wkt_data()[im_id].items()}
+
+
+def scale_to_mask(im_id: str, im_size: Tuple[int, int], poly: MultiPolygon)\
+        -> MultiPolygon:
     x_scaler, y_scaler = get_scalers(im_id, im_size)
-
-    def scale(polygons):
-        return shapely.affinity.scale(
-            polygons, xfact=x_scaler, yfact=y_scaler, origin=(0, 0, 0))
-
-    return {int(poly_type): scale(shapely.wkt.loads(poly))
-            for poly_type, poly in get_wkt_data()[im_id].items()}
+    return shapely.affinity.scale(
+        poly, xfact=x_scaler, yfact=y_scaler, origin=(0, 0, 0))
 
 
 def dump_polygons(im_id: str, im_size: Tuple[int, int], polygons: MultiPolygon)\
@@ -140,7 +142,6 @@ def chunks(lst, n):
 
 def mask_to_polygons(mask: np.ndarray, epsilon=5., min_area=10.)\
         -> MultiPolygon:
-    # TODO - tune epsilon and min_area, different values for different classes
     image, contours, hierarchy = cv2.findContours(
         ((mask == 1) * 255).astype(np.uint8),
         cv2.RETR_CCOMP, cv2.CHAIN_APPROX_TC89_KCOS)
@@ -180,3 +181,12 @@ def mask_to_polygons(mask: np.ndarray, epsilon=5., min_area=10.)\
 def load_mask_stats():
     with open('images/stats.json') as f:
         return json.load(f)
+
+
+def mask_tp_fp_fn(pred_mask: np.ndarray, true_mask: np.ndarray,
+                  threshold: float) -> Tuple[int, int, int]:
+    pred_mask = pred_mask >= threshold
+    true_mask = true_mask == 1
+    return (( pred_mask &  true_mask).sum(),
+            ( pred_mask & ~true_mask).sum(),
+            (~pred_mask &  true_mask).sum())
