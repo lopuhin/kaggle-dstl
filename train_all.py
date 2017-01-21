@@ -22,7 +22,10 @@ def main():
                       + other_args)
         print('\nStarting training for class {}: {}\n'
               .format(cls, ' '.join(train_args)))
-        subprocess.check_call(train_args)
+        try:
+            subprocess.check_call(train_args)
+        except subprocess.CalledProcessError as e:
+            print('Error running training for class {}: {}'.format(cls, e))
 
 
 if __name__ == '__main__':
