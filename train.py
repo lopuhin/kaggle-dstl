@@ -12,7 +12,11 @@ from typing import Callable, Dict, List
 import attr
 import numpy as np
 from sklearn.model_selection import GroupShuffleSplit
-import tensorflow as tf
+import torch
+from torch.autograd import Variable
+import torch.optim as optim
+import torch.nn as nn
+import torch.nn.functional as F
 import tqdm
 
 import utils
@@ -31,15 +35,8 @@ class HyperParams:
     patch_inner = attr.ib(default=32)
     patch_border = attr.ib(default=16)
 
-    dropout_keep_prob = attr.ib(default=0.0)
-    size1 = attr.ib(default=5)
-    filters1 = attr.ib(default=64)
-    size2 = attr.ib(default=5)
-    filters2 = attr.ib(default=64)
-    size3 = attr.ib(default=5)
-    filters3 = attr.ib(default=64)
-    size4 = attr.ib(default=7)
-    jaccard_loss = attr.ib(default=0)
+    dropout_keep_prob = attr.ib(default=0.0)  # TODO
+    jaccard_loss = attr.ib(default=0)  # TODO
 
     n_epochs = attr.ib(default=30)
     oversample = attr.ib(default=0.0)
@@ -67,6 +64,23 @@ class HyperParams:
                 setattr(self, k, v)
 
 
+class Net(nn.Module):
+    def __init__(self, hps: HyperParams):
+        super().__init__()
+        self.hps = hps
+        self.conv1 = nn.Conv2d(hps.n_channels, 4, 1)
+        # FIXME - padding is not really needed
+        self.conv2 = nn.Conv2d(4, 8, 3, padding=1)
+        self.conv3 = nn.Conv2d(8, hps.n_classes, 3, padding=1)
+
+    def forward(self, x):
+        x = F.relu(self.conv1(x))
+        x = F.relu(self.conv2(x))
+        x = F.relu(self.conv3(x))
+        b = self.hps.patch_border
+        return F.sigmoid(x[:, :, b:-b, b:-b])
+
+
 @attr.s
 class Image:
     id = attr.ib()
@@ -77,125 +91,36 @@ class Image:
 class Model:
     def __init__(self, hps: HyperParams):
         self.hps = hps
-        patch_size = 2 * hps.patch_border + hps.patch_inner
-        self.x = tf.placeholder(
-            tf.float32, [None, patch_size, patch_size, hps.n_channels])
-        self.y = tf.placeholder(
-            tf.float32, [None, hps.patch_inner, hps.patch_inner, hps.n_classes])
-        self.dropout_keep_prob = tf.placeholder(tf.float32, [])
+        self.net = Net(hps)
+        self.criterion = nn.BCELoss()
+        self.optimizer = optim.Adam(self.net.parameters(), lr=hps.learning_rate)
 
-        conv2d = lambda _x, _w: tf.nn.conv2d(
-            _x, _w, strides=[1, 1, 1, 1], padding='SAME')
-
-        w1 = tf.get_variable(
-            'w1', shape=[hps.size1, hps.size1, hps.n_channels, hps.filters1])
-        b1 = tf.get_variable(
-            'b1', shape=[hps.filters1], initializer=tf.zeros_initializer)
-        x = tf.nn.relu(conv2d(self.x, w1) + b1)
-
-        w2 = tf.get_variable(
-            'w2', shape=[hps.size2, hps.size2, hps.filters1, hps.filters2])
-        b2 = tf.get_variable(
-            'b2', shape=[hps.filters2], initializer=tf.zeros_initializer)
-        x = tf.nn.relu(conv2d(x, w2) + b2)
-
-        if hps.dropout_keep_prob:
-            x = tf.nn.dropout(x, keep_prob=self.dropout_keep_prob)
-
-        w3 = tf.get_variable(
-            'w3', shape=[hps.size3, hps.size3, hps.filters2, hps.filters3])
-        b3 = tf.get_variable(
-            'b3', shape=[hps.filters3], initializer=tf.zeros_initializer)
-        x = tf.nn.relu(conv2d(x, w3) + b3)
-
-        if hps.dropout_keep_prob:
-            x = tf.nn.dropout(x, keep_prob=self.dropout_keep_prob)
-
-        w4 = tf.get_variable(
-            'w4', shape=[hps.size4, hps.size4, hps.filters3, hps.n_classes])
-        b4 = tf.get_variable(
-            'b4', shape=[hps.n_classes], initializer=tf.zeros_initializer)
-        x = conv2d(x, w4) + b4
-
-        b = hps.patch_border
-        x_logits = x[:, b:-b, b:-b, :]
-        self.pred = tf.nn.sigmoid(x_logits)
-
-        losses = tf.nn.sigmoid_cross_entropy_with_logits(x_logits, self.y)
-        self.cls_losses = [tf.reduce_mean(losses[:, :, :, cls_idx])
-                           for cls_idx in range(hps.n_classes)]
-        self.loss = tf.reduce_mean(losses)
-
-        if hps.jaccard_loss:
-            intersection = tf.minimum(self.pred, self.y)
-            union = tf.maximum(self.pred, self.y)
-            iou = tf.reduce_mean(intersection / (union + 0.0000001))
-            self.loss += hps.jaccard_loss * (1 - tf.reduce_mean(iou))
-
-        self.global_step = tf.Variable(0, name='global_step', trainable=False)
-        optimizer = tf.train.AdamOptimizer(learning_rate=hps.learning_rate)
-        self.train_op = optimizer.minimize(
-            self.loss * hps.batch_size, self.global_step)
-
-        self.add_loss_summaries()
-        self.add_image_summaries()
-        self.summary_op = tf.summary.merge_all()
-
-    def add_loss_summaries(self):
-        if self.hps.has_all_classes:
-            tf.summary.scalar('loss/average', self.loss)
-        for cls_idx, loss in enumerate(self.cls_losses):
-            tf.summary.scalar(
-                'loss/cls-{}'.format(self.hps.classes[cls_idx]), loss)
-
-    def add_image_summaries(self):
-        b = self.hps.patch_border
-        s = self.hps.patch_inner
-        border = np.zeros([b * 2 + s, b * 2 + s, 3], dtype=np.float32)
-        border[ b, b:-b, 0] = border[-b, b:-b, 0] = 1
-        border[b:-b,  b, 0] = border[b:-b, -b, 0] = 1
-        border[-b, -b, 0] = 1
-        border_t = tf.pack(self.hps.batch_size * [tf.constant(border)])
-        # TODO: would be cool to add other channels as well
-        # TODO: fix image color range
-        rgb = self.x[:, :, :, :3]
-        channel_min = tf.reduce_min(rgb, axis=[0, 1, 2])
-        channel_max = tf.reduce_max(rgb, axis=[0, 1, 2])
-        rgb = (rgb - channel_min) / (channel_max - channel_min)
-        images = [tf.maximum(rgb, border_t)]
-        mark = np.zeros([s, s], dtype=np.float32)
-        mark[0, 0] = 1
-        mark_t = tf.pack(self.hps.batch_size * [tf.constant(mark)])
-        for cls_idx in range(self.hps.n_classes):
-            images.append(
-                tf.concat(1, [
-                    tf.pack(3 * [tf.maximum(im[:, :, :, cls_idx], mark_t)], axis=3)
-                    for im in [self.y, self.pred]]))
-        tf.summary.image('image', tf.concat(2, images), max_outputs=8)
+    def train_step(self, x, y):
+        # TODO - more native torch?
+        x = Variable(torch.from_numpy(x.astype(np.float32)))
+        y = Variable(torch.from_numpy(y.astype(np.float32)))
+        self.optimizer.zero_grad()
+        y_pred = self.net(x)
+        batch_size = x.size()[0]
+        loss = self.criterion(y_pred, y)
+        (loss * batch_size).backward()
+        self.optimizer.step()
+        return loss.data[0]
 
     def train(self, logdir: str, train_ids: List[str], valid_ids: List[str]):
+        # TODO - configure tensorboard_logger
         train_images = [self.load_image(im_id) for im_id in sorted(train_ids)]
-        sv = tf.train.Supervisor(
-            logdir=logdir,
-            summary_op=None,
-            global_step=self.global_step,
-            save_summaries_secs=10,
-            save_model_secs=60,
-        )
         valid_images = None
-        with sv.managed_session() as sess:
-            for n_epoch in range(self.hps.n_epochs):
-                logger.info('Epoch {}, training'.format(n_epoch + 1))
-                subsample = 10
-                for _ in range(subsample):
-                    self.train_on_images(train_images, sv, sess,
-                                         subsample=subsample)
-                    if valid_images is None:
-                        valid_images = [self.load_image(im_id)
-                                        for im_id in sorted(valid_ids)]
-                    if valid_images:
-                        self.validate_on_images(valid_images, sv, sess,
-                                                subsample=subsample)
+        for n_epoch in range(self.hps.n_epochs):
+            logger.info('Epoch {}, training'.format(n_epoch + 1))
+            subsample = 10
+            for _ in range(subsample):
+                self.train_on_images(train_images, subsample=subsample)
+                if valid_images is None:
+                    valid_images = [self.load_image(im_id)
+                                    for im_id in sorted(valid_ids)]
+                if valid_images:
+                    self.validate_on_images(valid_images, subsample=subsample)
 
     def preprocess_image(self, im_data: np.ndarray) -> np.ndarray:
         # mean = np.mean(im_data, axis=(0, 1))
@@ -241,9 +166,7 @@ class Model:
             mask = np.stack([mask[:, :, cls] for cls in self.hps.classes], 2)
         return Image(im_id, im_data, mask)
 
-    def train_on_images(self, train_images: List[Image],
-                        sv: tf.train.Supervisor, sess: tf.Session,
-                        subsample: int=1):
+    def train_on_images(self, train_images: List[Image], subsample: int=1):
         b = self.hps.patch_border
         s = self.hps.patch_inner
         # Extra margin for rotation
@@ -267,15 +190,17 @@ class Model:
                 mask = im.mask[x - m: x + s + m, y - m: y + s + m, :]
                 # TODO - mirror flips
                 angle = random.random() * 360
-                patch = utils.rotated(patch.astype(np.float32), angle)
-                mask = utils.rotated(mask.astype(np.float32), angle)
+               #patch = utils.rotated(patch.astype(np.float32), angle)
+               #mask = utils.rotated(mask.astype(np.float32), angle)
                 inputs.append(patch[m: -m, m: -m, :])
                 outputs.append(mask[m: -m, m: -m, :])
-            return {self.x: np.array(inputs),
-                    self.y: np.array(outputs),
-                    self.dropout_keep_prob: self.hps.dropout_keep_prob}
+            return (
+                # TODO - maybe do it everywhere
+                np.array(inputs).transpose([0, 3, 1, 2]),
+                np.array(outputs).transpose([0, 3, 1, 2]),
+            )
 
-        self._train_on_feeds(gen_batch, n_batches, sv=sv, sess=sess)
+        self._train_on_feeds(gen_batch, n_batches)
 
     def sample_im_xy(self, train_images):
         b = self.hps.patch_border
@@ -288,8 +213,7 @@ class Model:
         return im, (random.randint(mb, w - (mb + s)),
                     random.randint(mb, h - (mb + s)))
 
-    def _train_on_feeds(self, gen_batch: Callable[[int], Dict], n_batches: int,
-                        sv: tf.train.Supervisor, sess: tf.Session):
+    def _train_on_feeds(self, gen_batch, n_batches: int):
         losses = []
         tp_fp_fn = self._jaccard_store()
 
@@ -303,21 +227,17 @@ class Model:
                 ))
 
         t0 = time.time()
-        with ThreadPool(processes=4) as pool:
-            for i, feed_dict in enumerate(pool.imap_unordered(
-                    gen_batch, range(n_batches), chunksize=16)):
-                fetches = {'loss': self.loss, 'train': self.train_op}
+        with ThreadPool(processes=1) as pool:  # FIXME
+            for i, (x, y) in enumerate(pool.imap_unordered(
+                    gen_batch, range(n_batches), chunksize=1)):  # FIXME
                 if i % 100 == 0:
-                    fetches['summary'] = self.summary_op
-                    fetches['pred'] = self.pred
-                fetched = sess.run(fetches, feed_dict)
-                losses.append(fetched['loss'])
-                if 'pred' in fetched:
+                    pass # TODO - log smth.
+                loss = self.train_step(x, y)
+                losses.append(loss)
+                if False:
                     self._update_jaccard(
                         tp_fp_fn, feed_dict[self.y], fetched['pred'])
                     self._log_jaccard(tp_fp_fn, sv, sess)
-                if 'summary' in fetched:
-                    sv.summary_computed(sess, fetched['summary'])
                 t1 = time.time()
                 dt = t1 - t0
                 if dt > 10:
@@ -380,7 +300,6 @@ class Model:
             in sorted(tp_fp_fn.items()))
 
     def validate_on_images(self, valid_images: List[Image],
-                           sv: tf.train.Supervisor, sess: tf.Session,
                            subsample: int=1):
         b = self.hps.patch_border
         s = self.hps.patch_inner
@@ -420,7 +339,7 @@ class Model:
                               np.mean(losses[:, cls]), sv, sess)
         self._log_jaccard(tp_fp_fn, sv, sess, prefix='valid-')
 
-    def image_prediction(self, im: Image, sess: tf.Session) -> np.ndarray:
+    def image_prediction(self, im: Image) -> np.ndarray:
         # FIXME - some copy-paste
         w, h = im.data.shape[:2]
         b = self.hps.patch_border
@@ -438,13 +357,6 @@ class Model:
             for (x, y), mask in zip(xy_batch, pred):
                 pred_mask[x: x + s, y: y + s, :] = mask
         return pred_mask
-
-    def _log_summary(self, name: str, value,
-                     sv: tf.train.Supervisor, sess: tf.Session):
-        summary = tf.Summary()
-        summary.value.add(tag=name, simple_value=float(value))
-        sv.summary_computed(sess, summary,
-                            global_step=self.global_step.eval(session=sess))
 
 
 def main():
