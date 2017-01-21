@@ -1,6 +1,7 @@
 import csv
 from collections import defaultdict
 from itertools import islice
+import logging
 import json
 from typing import Dict, Tuple
 import sys
@@ -53,7 +54,39 @@ def load_image(im_id: str, rgb_only=False) -> np.ndarray:
     im_p = np.expand_dims(im_p, 2)
     im_m = cv2.resize(im_m, (w, h), interpolation=cv2.INTER_CUBIC)
     im_a = cv2.resize(im_a, (w, h), interpolation=cv2.INTER_CUBIC)
+    logger.info('Getting alignment')
+    try:
+        warp_matrix = _get_alignment(im_rgb, im_p)
+    except cv2.error as e:
+        logger.info('Error getting alignment: {}'.format(e))
+    else:
+        logger.info('Got alignment: {}'
+                    .format(str(warp_matrix).replace('\n', '')))
+        im_p = np.expand_dims(_apply_alignment(im_p, warp_matrix), 2)
+        # FIXME - other images might also be mis-aligned,
+        # but they have lower resolution, so should be less important
+        im_m = _apply_alignment(im_m, warp_matrix)
+        im_a = _apply_alignment(im_a, warp_matrix)
     return np.concatenate([im_rgb, im_p, im_m, im_a], axis=2)
+
+
+def _get_alignment(im_rgb, im_p):
+    patch_rgb = im_rgb[300:1900, 300:2200, 1].astype(np.float32)
+    patch_p = im_p[300:1900, 300:2200, 0].astype(np.float32)
+    warp_mode = cv2.MOTION_EUCLIDEAN
+    warp_matrix = np.eye(2, 3, dtype=np.float32)
+    criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 1000,  1e-7)
+    _, warp_matrix = cv2.findTransformECC(
+        patch_rgb, patch_p, warp_matrix, warp_mode, criteria)
+    return warp_matrix
+
+
+def _apply_alignment(im, warp_matrix):
+    im = cv2.warpAffine(
+        im, warp_matrix, (im.shape[1], im.shape[0]),
+        flags=cv2.INTER_LINEAR + cv2.WARP_INVERSE_MAP)
+    im[im == 0] = np.mean(im)
+    return im
 
 
 def load_polygons(im_id: str, im_size: Tuple[int, int])\
@@ -190,3 +223,16 @@ def mask_tp_fp_fn(pred_mask: np.ndarray, true_mask: np.ndarray,
     return (( pred_mask &  true_mask).sum(),
             ( pred_mask & ~true_mask).sum(),
             (~pred_mask &  true_mask).sum())
+
+
+def get_logger(name):
+    logger = logging.getLogger(name)
+    logger.setLevel(logging.INFO)
+    ch = logging.StreamHandler()
+    ch.setFormatter(logging.Formatter(
+        '%(asctime)s [%(levelname)s] %(module)s: %(message)s'))
+    logger.addHandler(ch)
+    return logger
+
+
+logger = get_logger(__name__)

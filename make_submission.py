@@ -2,7 +2,6 @@
 import argparse
 import csv
 from functools import partial
-import logging
 from pathlib import Path
 import multiprocessing
 from typing import Dict, List
@@ -17,12 +16,7 @@ import utils
 from train import Model, HyperParams, Image
 
 
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-ch = logging.StreamHandler()
-ch.setFormatter(logging.Formatter(
-    '%(asctime)s [%(levelname)s] %(module)s: %(message)s'))
-logger.addHandler(ch)
+logger = utils.get_logger(__name__)
 
 
 def main():

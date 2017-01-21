@@ -2,7 +2,6 @@
 import argparse
 from collections import defaultdict
 import json
-import logging
 from pathlib import Path
 from multiprocessing.pool import ThreadPool
 from pprint import pprint
@@ -19,18 +18,13 @@ import tqdm
 import utils
 
 
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-ch = logging.StreamHandler()
-ch.setFormatter(logging.Formatter(
-    '%(asctime)s [%(levelname)s] %(module)s: %(message)s'))
-logger.addHandler(ch)
+logger = utils.get_logger(__name__)
 
 
 @attr.s(slots=True)
 class HyperParams:
     n_channels = attr.ib(default=20)
-    classes = attr.ib(default=range(10))
+    classes = attr.ib(default=list(range(10)))
     total_classes = 10
     thresholds = attr.ib(default=[0.2, 0.3, 0.4, 0.5, 0.6])
 
