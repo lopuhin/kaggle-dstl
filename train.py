@@ -28,6 +28,7 @@ logger = utils.get_logger(__name__)
 
 @attr.s(slots=True)
 class HyperParams:
+    cls = attr.ib()
     n_channels = attr.ib(default=20)
     total_classes = 10
     thresholds = attr.ib(default=[0.2, 0.3, 0.4, 0.5, 0.6])
@@ -79,8 +80,7 @@ class Image:
 
 
 class Model:
-    def __init__(self, cls: int, hps: HyperParams):
-        self.cls = cls
+    def __init__(self, hps: HyperParams):
         self.hps = hps
         self.net = Net(hps)
         self.criterion = nn.BCELoss()
@@ -152,7 +152,7 @@ class Model:
                 dtype=np.uint8).transpose([1, 2, 0])
             with open(mask_filename, 'wb') as f:
                 np.save(f, mask)
-        mask = mask[:, :, self.cls]
+        mask = mask[:, :, self.hps.cls]
         return Image(im_id, im_data, mask)
 
     def train_on_images(self, train_images: List[Image], subsample: int=1):
@@ -226,7 +226,7 @@ class Model:
                 x, y = gen_batch(i)
                 if losses and i % 100 == 0:
                     tensorboard_logger.log_value(
-                        'loss/cls-{}'.format(self.cls),
+                        'loss/cls-{}'.format(self.hps.cls),
                         np.mean(losses[-log_step:]))
                     pred_y = self.net(Variable(x)).data
                     self._update_jaccard(tp_fp_fn, y.numpy(), pred_y.numpy())
@@ -259,7 +259,7 @@ class Model:
     def _log_jaccard(self, tp_fp_fn, prefix=''):
         for threshold, (tp, fp, fn) in tp_fp_fn.items():
             tensorboard_logger.log_value(
-                '{}jaccard-{}/cls-{}'.format(prefix, threshold, self.cls),
+                '{}jaccard-{}/cls-{}'.format(prefix, threshold, self.hps.cls),
                 self._jaccard(tp, fp, fn))
 
     def _jaccard(self, tp, fp, fn):
@@ -309,7 +309,7 @@ class Model:
         logger.info('Valid loss: {:.3f}, Jaccard: {}'.format(
             loss, self._format_jaccard(tp_fp_fn)))
         tensorboard_logger.log_value(
-            'valid-loss/cls-{}'.format(self.cls), loss)
+            'valid-loss/cls-{}'.format(self.hps.cls), loss)
         self._log_jaccard(tp_fp_fn, prefix='valid-')
 
     def image_prediction(self, im: Image) -> np.ndarray:
@@ -322,7 +322,8 @@ class Model:
         all_xy = [(x, y) for x in xs for y in ys]
         pred_mask = np.zeros([w, h], dtype=np.float32)
         self.net.eval()
-        for xy_batch in tqdm.tqdm(list(utils.chunks(all_xy, self.hps.batch_size))):
+        for xy_batch in tqdm.tqdm(
+                list(utils.chunks(all_xy, self.hps.batch_size))):
             inputs = np.array(
                 [im.data[x - b: x + s + b, y - b: y + s + b, :]
                  for x, y in xy_batch])
@@ -345,14 +346,14 @@ def main():
     arg('--only', type=str,
         help='Train on this image ids only (comma-separated) without validation')
     args = parser.parse_args()
-    hps = HyperParams()
+    hps = HyperParams(args.cls)
     hps.update(args.hps)
     pprint(attr.asdict(hps))
     Path(args.logdir).mkdir(exist_ok=True)
     Path(args.logdir).joinpath('hps.json').write_text(
         json.dumps(attr.asdict(hps), indent=True, sort_keys=True))
 
-    model = Model(args.cls, hps=hps)
+    model = Model(hps=hps)
     all_im_ids = list(utils.get_wkt_data())
     valid_ids = []
     bad_pairs = [('6110', '6140'),

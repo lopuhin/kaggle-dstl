@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 import argparse
 import csv
+import json
 from functools import partial
 from pathlib import Path
 import multiprocessing
-from typing import Dict, List
 
 import numpy as np
 import shapely.affinity
@@ -22,17 +22,15 @@ logger = utils.get_logger(__name__)
 def main():
     parser = argparse.ArgumentParser()
     arg = parser.add_argument
-    arg('cls', type=int, help='Model class')
     arg('logdir', type=str, help='Path to log directory')
     arg('output', type=str, help='Submission csv')
     arg('--train-only', action='store_true', help='Predict only train images')
     arg('--only', help='Only predict these image ids (comma-separated)')
-    arg('--hps', type=str, help='Change hyperparameters in k1=v1,k2=v2 format')
     arg('--threshold', type=float, default=0.5)
     arg('--epsilon', type=float, default=5.0, help='smoothing')
     args = parser.parse_args()
-    hps = HyperParams()
-    hps.update(args.hps)
+    hps = HyperParams(**json.loads(
+        Path(args.logdir).joinpath('hps.json').read_text()))
 
     only = set(args.only.split(',')) if args.only else set()
     with open('sample_submission.csv') as f:
@@ -43,7 +41,7 @@ def main():
     store = Path(args.output.split('.csv')[0])
     store.mkdir(exist_ok=True)
 
-    model = Model(args.cls, hps=hps)
+    model = Model(hps=hps)
     with tf.Session() as sess:
         saver = tf.train.Saver()
         ckpt = tf.train.get_checkpoint_state(args.logdir)
