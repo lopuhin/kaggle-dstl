@@ -320,15 +320,16 @@ class Model:
         xs = range(b, w - (b + s), s)
         ys = range(b, h - (b + s), s)
         all_xy = [(x, y) for x in xs for y in ys]
-        pred_mask = np.zeros([w, h, self.hps.n_classes])
+        pred_mask = np.zeros([w, h], dtype=np.float32)
+        self.net.eval()
         for xy_batch in tqdm.tqdm(list(utils.chunks(all_xy, self.hps.batch_size))):
-            inputs = np.array([im.data[x - b: x + s + b,
-                                       y - b: y + s + b, :]
-                               for x, y in xy_batch])
-            feed_dict = {self.x: inputs, self.dropout_keep_prob: 1.0}
-            pred = sess.run(self.pred, feed_dict)
-            for (x, y), mask in zip(xy_batch, pred):
-                pred_mask[x: x + s, y: y + s, :] = mask
+            inputs = np.array(
+                [im.data[x - b: x + s + b, y - b: y + s + b, :]
+                 for x, y in xy_batch])
+            inputs = inputs.transpose([0, 3, 1, 2]).astype(np.float32)
+            y_pred = self.net(Variable(torch.from_numpy(inputs)))
+            for (x, y), mask in zip(xy_batch, y_pred.data.numpy()):
+                pred_mask[x: x + s, y: y + s] = mask
         return pred_mask
 
 
