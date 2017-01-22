@@ -89,7 +89,6 @@ class Model:
     def train_step(self, x, y):
         x = Variable(x)
         y = Variable(y)
-        self.net.train()
         self.optimizer.zero_grad()
         y_pred = self.net(x)
         batch_size = x.size()[0]
@@ -157,6 +156,7 @@ class Model:
         return Image(im_id, im_data, mask)
 
     def train_on_images(self, train_images: List[Image], subsample: int=1):
+        self.net.train()
         b = self.hps.patch_border
         s = self.hps.patch_inner
         # Extra margin for rotation
@@ -224,7 +224,7 @@ class Model:
            #        gen_batch, range(n_batches), chunksize=100)):  # FIXME
             for i in range(n_batches):
                 x, y = gen_batch(i)
-                if losses and i % 10 == 0:
+                if losses and i % 100 == 0:
                     tensorboard_logger.log_value(
                         'loss/cls-{}'.format(self.cls),
                         np.mean(losses[-log_step:]))
@@ -275,6 +275,7 @@ class Model:
 
     def validate_on_images(self, valid_images: List[Image],
                            subsample: int=1):
+        self.net.eval()
         b = self.hps.patch_border
         s = self.hps.patch_inner
         losses = []
@@ -287,28 +288,28 @@ class Model:
             if subsample != 1:
                 random.shuffle(all_xy)
                 all_xy = all_xy[:len(all_xy) // subsample]
-            pred_mask = np.zeros([w, h, self.hps.n_classes])
+            pred_mask = np.zeros([w, h], dtype=np.float32)
             for xy_batch in utils.chunks(all_xy, self.hps.batch_size):
-                inputs = np.array([im.data[x - b: x + s + b,
-                                           y - b: y + s + b, :]
-                                   for x, y in xy_batch])
-                outputs = np.array([im.mask[x: x + s, y: y + s, :]
-                                    for x, y in xy_batch])
-                feed_dict = {self.x: inputs, self.y: outputs,
-                             self.dropout_keep_prob: 1.0}
-                cls_losses, pred = sess.run([
-                    self.cls_losses, self.pred], feed_dict)
-                losses.append(cls_losses)
-                for (x, y), mask in zip(xy_batch, pred):
-                    pred_mask[x: x + s, y: y + s, :] = mask
-                self._update_jaccard(tp_fp_fn, outputs, pred)
-        losses = np.array(losses)
+                inputs = np.array(
+                    [im.data[x - b: x + s + b, y - b: y + s + b, :]
+                     for x, y in xy_batch])
+                inputs = inputs.transpose([0, 3, 1, 2]).astype(np.float32)
+                outputs = np.array(
+                    [im.mask[x: x + s, y: y + s] for x, y in xy_batch])
+                outputs = outputs.astype(np.float32)
+                y_pred = self.net(Variable(torch.from_numpy(inputs)))
+                loss = self.criterion(
+                    y_pred, Variable(torch.from_numpy(outputs)))
+                losses.append(loss.data[0])
+                y_pred_numpy = y_pred.data.numpy()
+                for (x, y), mask in zip(xy_batch, y_pred_numpy):
+                    pred_mask[x: x + s, y: y + s] = mask
+                self._update_jaccard(tp_fp_fn, outputs, y_pred_numpy)
         loss = np.mean(losses)
         logger.info('Valid loss: {:.3f}, Jaccard: {}'.format(
             loss, self._format_jaccard(tp_fp_fn)))
-        for cls, cls_name in enumerate(self.hps.classes):
-            self._log_summary('valid-loss/cls-{}'.format(cls_name),
-                              np.mean(losses[:, cls]), sv, sess)
+        tensorboard_logger.log_value(
+            'valid-loss/cls-{}'.format(self.cls), loss)
         self._log_jaccard(tp_fp_fn, prefix='valid-')
 
     def image_prediction(self, im: Image) -> np.ndarray:
