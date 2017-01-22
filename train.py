@@ -12,6 +12,7 @@ from typing import Callable, Dict, List
 import attr
 import numpy as np
 from sklearn.model_selection import GroupShuffleSplit
+import tensorboard_logger
 import torch
 from torch.autograd import Variable
 import torch.optim as optim
@@ -28,7 +29,6 @@ logger = utils.get_logger(__name__)
 @attr.s(slots=True)
 class HyperParams:
     n_channels = attr.ib(default=20)
-    classes = attr.ib(default=list(range(10)))
     total_classes = 10
     thresholds = attr.ib(default=[0.2, 0.3, 0.4, 0.5, 0.6])
 
@@ -43,21 +43,11 @@ class HyperParams:
     learning_rate = attr.ib(default=0.0001)
     batch_size = attr.ib(default=128)
 
-    @property
-    def n_classes(self):
-        return len(self.classes)
-
-    @property
-    def has_all_classes(self):
-        return self.n_classes == self.total_classes
-
     def update(self, hps_string: str):
         if hps_string:
             for pair in hps_string.split(','):
                 k, v = pair.split('=')
-                if k == 'classes':
-                    v = [int(cls) for cls in v.split('-')]
-                elif '.' in v:
+                if '.' in v:
                     v = float(v)
                 else:
                     v = int(v)
@@ -71,14 +61,14 @@ class Net(nn.Module):
         self.conv1 = nn.Conv2d(hps.n_channels, 4, 1)
         # FIXME - padding is not really needed
         self.conv2 = nn.Conv2d(4, 8, 3, padding=1)
-        self.conv3 = nn.Conv2d(8, hps.n_classes, 3, padding=1)
+        self.conv3 = nn.Conv2d(8, 1, 3, padding=1)
 
     def forward(self, x):
         x = F.relu(self.conv1(x))
         x = F.relu(self.conv2(x))
         x = F.relu(self.conv3(x))
         b = self.hps.patch_border
-        return F.sigmoid(x[:, :, b:-b, b:-b])
+        return F.sigmoid(x[:, 0, b:-b, b:-b])
 
 
 @attr.s
@@ -89,16 +79,17 @@ class Image:
 
 
 class Model:
-    def __init__(self, hps: HyperParams):
+    def __init__(self, cls: int, hps: HyperParams):
+        self.cls = cls
         self.hps = hps
         self.net = Net(hps)
         self.criterion = nn.BCELoss()
         self.optimizer = optim.Adam(self.net.parameters(), lr=hps.learning_rate)
 
     def train_step(self, x, y):
-        # TODO - more native torch?
-        x = Variable(torch.from_numpy(x.astype(np.float32)))
-        y = Variable(torch.from_numpy(y.astype(np.float32)))
+        x = Variable(x)
+        y = Variable(y)
+        self.net.train()
         self.optimizer.zero_grad()
         y_pred = self.net(x)
         batch_size = x.size()[0]
@@ -108,7 +99,7 @@ class Model:
         return loss.data[0]
 
     def train(self, logdir: str, train_ids: List[str], valid_ids: List[str]):
-        # TODO - configure tensorboard_logger
+        tensorboard_logger.configure(logdir)
         train_images = [self.load_image(im_id) for im_id in sorted(train_ids)]
         valid_images = None
         for n_epoch in range(self.hps.n_epochs):
@@ -162,8 +153,7 @@ class Model:
                 dtype=np.uint8).transpose([1, 2, 0])
             with open(mask_filename, 'wb') as f:
                 np.save(f, mask)
-        if not self.hps.has_all_classes:
-            mask = np.stack([mask[:, :, cls] for cls in self.hps.classes], 2)
+        mask = mask[:, :, self.cls]
         return Image(im_id, im_data, mask)
 
     def train_on_images(self, train_images: List[Image], subsample: int=1):
@@ -187,18 +177,19 @@ class Model:
                             break
                         im, (x, y) = self.sample_im_xy(train_images)
                 patch = im.data[x - mb: x + s + mb, y - mb: y + s + mb, :]
-                mask = im.mask[x - m: x + s + m, y - m: y + s + m, :]
+                mask = im.mask[x - m: x + s + m, y - m: y + s + m]
                 # TODO - mirror flips
                 angle = random.random() * 360
-               #patch = utils.rotated(patch.astype(np.float32), angle)
-               #mask = utils.rotated(mask.astype(np.float32), angle)
+                patch = utils.rotated(patch.astype(np.float32), angle)
+                mask = utils.rotated(mask.astype(np.float32), angle)
                 inputs.append(patch[m: -m, m: -m, :])
-                outputs.append(mask[m: -m, m: -m, :])
-            return (
-                # TODO - maybe do it everywhere
-                np.array(inputs).transpose([0, 3, 1, 2]),
-                np.array(outputs).transpose([0, 3, 1, 2]),
-            )
+                outputs.append(mask[m: -m, m: -m])
+
+            # TODO - transpose earlier
+            # TODO - more native torch? check rotation in torchvision
+            inputs = np.array(inputs).transpose([0, 3, 1, 2])
+            outputs = np.array(outputs)
+            return torch.from_numpy(inputs), torch.from_numpy(outputs)
 
         self._train_on_feeds(gen_batch, n_batches)
 
@@ -227,17 +218,21 @@ class Model:
                 ))
 
         t0 = time.time()
-        with ThreadPool(processes=1) as pool:  # FIXME
-            for i, (x, y) in enumerate(pool.imap_unordered(
-                    gen_batch, range(n_batches), chunksize=1)):  # FIXME
-                if i % 100 == 0:
-                    pass # TODO - log smth.
+        log_step = 100
+        with ThreadPool(processes=4) as pool:  # FIXME
+           #for i, (x, y) in enumerate(pool.imap_unordered(
+           #        gen_batch, range(n_batches), chunksize=100)):  # FIXME
+            for i in range(n_batches):
+                x, y = gen_batch(i)
+                if losses and i % 10 == 0:
+                    tensorboard_logger.log_value(
+                        'loss/cls-{}'.format(self.cls),
+                        np.mean(losses[-log_step:]))
+                    pred_y = self.net(Variable(x)).data
+                    self._update_jaccard(tp_fp_fn, y.numpy(), pred_y.numpy())
+                    self._log_jaccard(tp_fp_fn)
                 loss = self.train_step(x, y)
                 losses.append(loss)
-                if False:
-                    self._update_jaccard(
-                        tp_fp_fn, feed_dict[self.y], fetched['pred'])
-                    self._log_jaccard(tp_fp_fn, sv, sess)
                 t1 = time.time()
                 dt = t1 - t0
                 if dt > 10:
@@ -249,55 +244,34 @@ class Model:
                 log()
 
     def _jaccard_store(self):
-        return {threshold: [defaultdict(list) for _ in range(3)]
+        return {threshold: [[] for _ in range(3)]
                 for threshold in self.hps.thresholds}
 
     def _update_jaccard(self, tp_fp_fn, mask, pred):
         assert len(mask.shape) == len(pred.shape)
         assert len(mask.shape) in {3, 4}
         for threshold, (tp, fp, fn) in tp_fp_fn.items():
-            for cls_idx, cls in enumerate(self.hps.classes):
-                if len(mask.shape) == 4:
-                    cls_pred = pred[:, :, :, cls_idx]
-                    cls_true = mask[:, :, :, cls_idx]
-                else:
-                    cls_pred = pred[:, :, cls_idx]
-                    cls_true = mask[:, :, cls_idx]
-                _tp, _fp, _fn = utils.mask_tp_fp_fn(
-                    cls_pred, cls_true, threshold)
-                tp[cls].append(_tp)
-                fp[cls].append(_fp)
-                fn[cls].append(_fn)
+            _tp, _fp, _fn = utils.mask_tp_fp_fn(pred, mask, threshold)
+            tp.append(_tp)
+            fp.append(_fp)
+            fn.append(_fn)
 
-    def _log_jaccard(self, tp_fp_fn, sv, sess, prefix=''):
+    def _log_jaccard(self, tp_fp_fn, prefix=''):
         for threshold, (tp, fp, fn) in tp_fp_fn.items():
-            jaccards = []
-            for cls in self.hps.classes:
-                jaccard = self._cls_jaccard(tp, fp, fn, cls)
-                self._log_summary(
-                    '{}jaccard-{}/cls-{}'.format(prefix, threshold, cls),
-                    jaccard, sv, sess)
-                jaccards.append(jaccard)
-            if self.hps.has_all_classes:
-                self._log_summary(
-                    '{}jaccard-{}/average'.format(prefix, threshold),
-                    np.mean(jaccards), sv, sess)
+            tensorboard_logger.log_value(
+                '{}jaccard-{}/cls-{}'.format(prefix, threshold, self.cls),
+                self._jaccard(tp, fp, fn))
 
     def _jaccard(self, tp, fp, fn):
-        return np.mean([self._cls_jaccard(tp, fp, fn, cls)
-                        for cls in self.hps.classes])
-
-    def _cls_jaccard(self, tp, fp, fn, cls):
-        if sum(tp[cls]) == 0:
+        if sum(tp) == 0:
             return 0
-        return sum(tp[cls]) / (sum(tp[cls]) + sum(fn[cls]) + sum(fp[cls]))
+        return sum(tp) / (sum(tp) + sum(fn) + sum(fp))
 
     def _format_jaccard(self, tp_fp_fn):
         return ', '.join(
             'at {:.2f}: {:.3f}'.format(
                 threshold, self._jaccard(tp, fp, fn))
-            for threshold, (tp, fp, fn)
-            in sorted(tp_fp_fn.items()))
+            for threshold, (tp, fp, fn) in sorted(tp_fp_fn.items()))
 
     def validate_on_images(self, valid_images: List[Image],
                            subsample: int=1):
@@ -332,12 +306,10 @@ class Model:
         loss = np.mean(losses)
         logger.info('Valid loss: {:.3f}, Jaccard: {}'.format(
             loss, self._format_jaccard(tp_fp_fn)))
-        if self.hps.has_all_classes:
-            self._log_summary('valid-loss/average', loss, sv, sess)
         for cls, cls_name in enumerate(self.hps.classes):
             self._log_summary('valid-loss/cls-{}'.format(cls_name),
                               np.mean(losses[:, cls]), sv, sess)
-        self._log_jaccard(tp_fp_fn, sv, sess, prefix='valid-')
+        self._log_jaccard(tp_fp_fn, prefix='valid-')
 
     def image_prediction(self, im: Image) -> np.ndarray:
         # FIXME - some copy-paste
@@ -362,6 +334,7 @@ class Model:
 def main():
     parser = argparse.ArgumentParser()
     arg = parser.add_argument
+    arg('cls', type=int, help='Class to train on')
     arg('logdir', type=str, help='Path to log directory')
     arg('--hps', type=str, help='Change hyperparameters in k1=v1,k2=v2 format')
     arg('--all', action='store_true',
@@ -377,7 +350,7 @@ def main():
     Path(args.logdir).joinpath('hps.json').write_text(
         json.dumps(attr.asdict(hps), indent=True, sort_keys=True))
 
-    model = Model(hps=hps)
+    model = Model(args.cls, hps=hps)
     all_im_ids = list(utils.get_wkt_data())
     valid_ids = []
     bad_pairs = [('6110', '6140'),
@@ -389,10 +362,8 @@ def main():
         train_ids = all_im_ids
     elif args.stratified:
         mask_stats = utils.load_mask_stats()
-        im_area = [
-            (im_id, sum(mask_stats[im_id][str(cls)]['area']
-                        for cls in hps.classes))
-            for im_id in all_im_ids]
+        im_area = [(im_id, mask_stats[im_id][str(args.cls)]['area'])
+                   for im_id in all_im_ids]
         im_area.sort(key=lambda x: (x[1], x[0]), reverse=True)
         train_ids, valid_ids = [], []
         for idx, (im_id, _) in enumerate(im_area):

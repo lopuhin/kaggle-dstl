@@ -146,10 +146,7 @@ def rotated(patch: np.ndarray, angle: float) -> np.ndarray:
     size = patch.shape[:2]
     center = tuple(np.array(size) / 2)
     rot_mat = cv2.getRotationMatrix2D(center, angle, 1.0)
-    rot_patch = cv2.warpAffine(patch, rot_mat, size, flags=cv2.INTER_LINEAR)
-    if patch.shape[2] == 1 and rot_patch.shape == patch.shape[:2]:
-        rot_patch = np.expand_dims(rot_patch, axis=2)
-    return rot_patch
+    return cv2.warpAffine(patch, rot_mat, size, flags=cv2.INTER_LINEAR)
 
 
 def scale_percentile(matrix: np.ndarray) -> np.ndarray:
