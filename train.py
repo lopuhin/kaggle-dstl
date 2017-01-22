@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import argparse
-from collections import defaultdict
 import json
 from pathlib import Path
 from multiprocessing.pool import ThreadPool
@@ -59,6 +58,7 @@ class Net(nn.Module):
     def __init__(self, hps: HyperParams):
         super().__init__()
         self.hps = hps
+        self.register_buffer('global_step', torch.IntTensor(1))
         self.conv1 = nn.Conv2d(hps.n_channels, 4, 1)
         # FIXME - padding is not really needed
         self.conv2 = nn.Conv2d(4, 8, 3, padding=1)
@@ -85,6 +85,7 @@ class Model:
         self.net = Net(hps)
         self.criterion = nn.BCELoss()
         self.optimizer = optim.Adam(self.net.parameters(), lr=hps.learning_rate)
+        self.tb_logger = None  # type: tensorboard_logger.Logger
 
     def train_step(self, x, y):
         x = Variable(x)
@@ -95,13 +96,15 @@ class Model:
         loss = self.criterion(y_pred, y)
         (loss * batch_size).backward()
         self.optimizer.step()
+        self.net.global_step += 1
         return loss.data[0]
 
     def train(self, logdir: str, train_ids: List[str], valid_ids: List[str]):
-        tensorboard_logger.configure(logdir)
+        self.tb_logger = tensorboard_logger.Logger(logdir)
         train_images = [self.load_image(im_id) for im_id in sorted(train_ids)]
         valid_images = None
-        for n_epoch in range(self.hps.n_epochs):
+        n_epoch = self.restore_snapshot(logdir)
+        for n_epoch in range(n_epoch, self.hps.n_epochs):
             logger.info('Epoch {}, training'.format(n_epoch + 1))
             subsample = 10
             for _ in range(subsample):
@@ -111,6 +114,8 @@ class Model:
                                     for im_id in sorted(valid_ids)]
                 if valid_images:
                     self.validate_on_images(valid_images, subsample=subsample)
+            self.save_snapshot(logdir, n_epoch)
+        self.tb_logger = None
 
     def preprocess_image(self, im_data: np.ndarray) -> np.ndarray:
         # mean = np.mean(im_data, axis=(0, 1))
@@ -224,8 +229,8 @@ class Model:
            #        gen_batch, range(n_batches), chunksize=100)):  # FIXME
             for i in range(n_batches):
                 x, y = gen_batch(i)
-                if losses and i % 100 == 0:
-                    tensorboard_logger.log_value(
+                if losses and i % log_step == 0:
+                    self._log_value(
                         'loss/cls-{}'.format(self.hps.cls),
                         np.mean(losses[-log_step:]))
                     pred_y = self.net(Variable(x)).data
@@ -258,7 +263,7 @@ class Model:
 
     def _log_jaccard(self, tp_fp_fn, prefix=''):
         for threshold, (tp, fp, fn) in tp_fp_fn.items():
-            tensorboard_logger.log_value(
+            self._log_value(
                 '{}jaccard-{}/cls-{}'.format(prefix, threshold, self.hps.cls),
                 self._jaccard(tp, fp, fn))
 
@@ -272,6 +277,9 @@ class Model:
             'at {:.2f}: {:.3f}'.format(
                 threshold, self._jaccard(tp, fp, fn))
             for threshold, (tp, fp, fn) in sorted(tp_fp_fn.items()))
+
+    def _log_value(self, name, value):
+        self.tb_logger.log_value(name, value, step=self.net.global_step[0])
 
     def validate_on_images(self, valid_images: List[Image],
                            subsample: int=1):
@@ -308,11 +316,30 @@ class Model:
         loss = np.mean(losses)
         logger.info('Valid loss: {:.3f}, Jaccard: {}'.format(
             loss, self._format_jaccard(tp_fp_fn)))
-        tensorboard_logger.log_value(
+        self._log_value(
             'valid-loss/cls-{}'.format(self.hps.cls), loss)
         self._log_jaccard(tp_fp_fn, prefix='valid-')
 
-    def image_prediction(self, im: Image) -> np.ndarray:
+    def restore_snapshot(self, logdir: str) -> int:
+        for n_epoch in reversed(range(self.hps.n_epochs)):
+            model_path = self._model_path(logdir, n_epoch)
+            if Path(model_path).exists():
+                logger.info('Loading snapshot {}'.format(model_path))
+                state = torch.load(model_path)
+                self.net.load_state_dict(state)
+                return n_epoch + 1
+        return 0
+
+    def save_snapshot(self, logdir: str, n_epoch: int):
+        model_path = self._model_path(logdir, n_epoch)
+        logger.info('Saving snapshot {}'.format(model_path))
+        torch.save(self.net.state_dict(), model_path)
+
+    def _model_path(self, logdir: str, n_epoch: int) -> str:
+        return str(Path(logdir) / ('model-{}'.format(n_epoch)))
+
+    def predict_image_mask(self, im: Image) -> np.ndarray:
+        self.net.eval()
         # FIXME - some copy-paste
         w, h = im.data.shape[:2]
         b = self.hps.patch_border
