@@ -29,6 +29,7 @@ logger = utils.get_logger(__name__)
 @attr.s(slots=True)
 class HyperParams:
     cls = attr.ib()
+    net = attr.ib(default='DefaultNet')
     n_channels = attr.ib(default=20)
     total_classes = 10
     thresholds = attr.ib(default=[0.2, 0.3, 0.4, 0.5, 0.6])
@@ -50,16 +51,21 @@ class HyperParams:
                 k, v = pair.split('=')
                 if '.' in v:
                     v = float(v)
-                else:
+                elif k != 'net':
                     v = int(v)
                 setattr(self, k, v)
 
 
-class Net(nn.Module):
+class BaseNet(nn.Module):
     def __init__(self, hps: HyperParams):
         super().__init__()
         self.hps = hps
         self.register_buffer('global_step', torch.IntTensor(1))
+
+
+class MiniNet(BaseNet):
+    def __init__(self, hps):
+        super().__init__(hps)
         self.conv1 = nn.Conv2d(hps.n_channels, 4, 1)
         # FIXME - padding is not really needed
         self.conv2 = nn.Conv2d(4, 8, 3, padding=1)
@@ -69,6 +75,24 @@ class Net(nn.Module):
         x = F.relu(self.conv1(x))
         x = F.relu(self.conv2(x))
         x = F.relu(self.conv3(x))
+        b = self.hps.patch_border
+        return F.sigmoid(x[:, 0, b:-b, b:-b])
+
+
+class DefaultNet(BaseNet):
+    def __init__(self, hps):
+        super().__init__(hps)
+        # FIXME - padding is not really needed
+        self.conv1 = nn.Conv2d(hps.n_channels, 64, 5, padding=2)
+        self.conv2 = nn.Conv2d(64, 64, 5, padding=2)
+        self.conv3 = nn.Conv2d(64, 64, 5, padding=2)
+        self.conv4 = nn.Conv2d(64, 1, 7, padding=3)
+
+    def forward(self, x):
+        x = F.relu(self.conv1(x))
+        x = F.relu(self.conv2(x))
+        x = F.relu(self.conv3(x))
+        x = F.relu(self.conv4(x))
         b = self.hps.patch_border
         return F.sigmoid(x[:, 0, b:-b, b:-b])
 
@@ -88,7 +112,7 @@ class Image:
 class Model:
     def __init__(self, hps: HyperParams):
         self.hps = hps
-        self.net = Net(hps)
+        self.net = globals()[hps.net](hps)
         self.criterion = nn.BCELoss()
         self.optimizer = optim.Adam(self.net.parameters(), lr=hps.learning_rate)
         self.tb_logger = None  # type: tensorboard_logger.Logger
