@@ -14,6 +14,7 @@ from sklearn.model_selection import GroupShuffleSplit
 import tensorboard_logger
 import torch
 from torch.autograd import Variable
+import torch.cuda
 import torch.optim as optim
 import torch.nn as nn
 import torch.nn.functional as F
@@ -86,10 +87,14 @@ class Model:
         self.criterion = nn.BCELoss()
         self.optimizer = optim.Adam(self.net.parameters(), lr=hps.learning_rate)
         self.tb_logger = None  # type: tensorboard_logger.Logger
+        self.on_gpu = torch.cuda.is_available()
+        if self.on_gpu:
+            self.net.cuda()
 
     def train_step(self, x, y):
-        x = Variable(x)
-        y = Variable(y)
+        if self.on_gpu:
+            x, y = x.cuda(), y.cuda()
+        x, y = Variable(x), Variable(y)
         self.optimizer.zero_grad()
         y_pred = self.net(x)
         batch_size = x.size()[0]
