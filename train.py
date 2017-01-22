@@ -79,6 +79,11 @@ class Image:
     data = attr.ib()
     mask = attr.ib(default=None)
 
+    @property
+    def size(self):
+        assert self.data.shape[0] <= 20
+        return self.data.shape[1:]
+
 
 class Model:
     def __init__(self, hps: HyperParams):
@@ -139,31 +144,32 @@ class Model:
             4243.25847972, 4473.47956815, 4178.84648439, 3708.16482918,
             2887.49330138, 2589.61786722, 2525.53347208, 2417.23798598],
             dtype=np.float32)
-        return ((im_data - mean) / std).astype(np.float16)
+        scaled = ((im_data - mean) / std).astype(np.float16)
+        return scaled.transpose([2, 0, 1])  # torch order
 
     def load_image(self, im_id: str) -> Image:
         logger.info('Loading {}'.format(im_id))
-        im_data_filename = './im_data/{}.npy'.format(im_id)
-        mask_filename = './mask/{}.npy'.format(im_id)
-        if Path(im_data_filename).exists():
-            im_data = np.load(im_data_filename)
+        im_cache = Path('im_cache')
+        im_data_path = im_cache.joinpath('{}.data'.format(im_id))
+        mask_path = im_cache.joinpath('{}.mask'.format(im_id))
+        if im_data_path.exists():
+            im_data = np.load(str(im_data_path))
         else:
             im_data = self.preprocess_image(utils.load_image(im_id))
-            with open(im_data_filename, 'wb') as f:
+            with im_data_path.open('wb') as f:
                 np.save(f, im_data)
-        if Path(mask_filename).exists():
-            mask = np.load(mask_filename)
+        if mask_path.exists():
+            mask = np.load(str(mask_path))
         else:
-            im_size = im_data.shape[:2]
+            im_size = im_data.shape[1:]
             poly_by_type = utils.load_polygons(im_id, im_size)
             mask = np.array(
                 [utils.mask_for_polygons(im_size, poly_by_type[poly_type + 1])
                  for poly_type in range(self.hps.total_classes)],
-                dtype=np.uint8).transpose([1, 2, 0])
-            with open(mask_filename, 'wb') as f:
+                dtype=np.uint8)
+            with mask_path.open('wb') as f:
                 np.save(f, mask)
-        mask = mask[:, :, self.hps.cls]
-        return Image(im_id, im_data, mask)
+        return Image(im_id, im_data, mask[self.hps.cls])
 
     def train_on_images(self, train_images: List[Image], subsample: int=1):
         self.net.train()
@@ -173,7 +179,7 @@ class Model:
         m = int(np.ceil((np.sqrt(2) - 1) * (b + s / 2)))
         mb = m + b  # full margin
         avg_area = np.mean(
-            [im.data.shape[0] * im.data.shape[1] for im in train_images])
+            [im.size[0] * im.size[1] for im in train_images])
         n_batches = int(avg_area / (s + b) / self.hps.batch_size / subsample)
 
         def gen_batch(_):
@@ -186,20 +192,21 @@ class Model:
                         if im.mask[x - m: x + s + m, y - m: y + s + m].sum():
                             break
                         im, (x, y) = self.sample_im_xy(train_images)
-                patch = im.data[x - mb: x + s + mb, y - mb: y + s + mb, :]
+                patch = im.data[:, x - mb: x + s + mb, y - mb: y + s + mb]
                 mask = im.mask[x - m: x + s + m, y - m: y + s + m]
                 # TODO - mirror flips
                 angle = random.random() * 360
-                patch = utils.rotated(patch.astype(np.float32), angle)
+                # TODO - do it without transpose?
+                patch = (
+                    utils.rotated(
+                        patch.transpose([1, 2, 0]).astype(np.float32), angle)
+                    .transpose([2, 0, 1]))
                 mask = utils.rotated(mask.astype(np.float32), angle)
-                inputs.append(patch[m: -m, m: -m, :])
+                inputs.append(patch[:, m: -m, m: -m])
                 outputs.append(mask[m: -m, m: -m])
 
-            # TODO - transpose earlier
-            # TODO - more native torch? check rotation in torchvision
-            inputs = np.array(inputs).transpose([0, 3, 1, 2])
-            outputs = np.array(outputs)
-            return torch.from_numpy(inputs), torch.from_numpy(outputs)
+            return (torch.from_numpy(np.array(inputs)),
+                    torch.from_numpy(np.array(outputs)))
 
         self._train_on_feeds(gen_batch, n_batches)
 
@@ -210,7 +217,7 @@ class Model:
         m = int(np.ceil((np.sqrt(2) - 1) * (b + s / 2)))
         mb = m + b  # full margin
         im = random.choice(train_images)
-        w, h = im.data.shape[:2]
+        w, h = im.size
         return im, (random.randint(mb, w - (mb + s)),
                     random.randint(mb, h - (mb + s)))
 
@@ -294,7 +301,7 @@ class Model:
         losses = []
         tp_fp_fn = self._jaccard_store()
         for im in valid_images:
-            w, h = im.data.shape[:2]
+            w, h = im.size
             xs = range(b, w - (b + s), s)
             ys = range(b, h - (b + s), s)
             all_xy = [(x, y) for x in xs for y in ys]
@@ -304,9 +311,8 @@ class Model:
             pred_mask = np.zeros([w, h], dtype=np.float32)
             for xy_batch in utils.chunks(all_xy, self.hps.batch_size):
                 inputs = np.array(
-                    [im.data[x - b: x + s + b, y - b: y + s + b, :]
-                     for x, y in xy_batch])
-                inputs = inputs.transpose([0, 3, 1, 2]).astype(np.float32)
+                    [im.data[:, x - b: x + s + b, y - b: y + s + b]
+                     for x, y in xy_batch]).astype(np.float32)
                 outputs = np.array(
                     [im.mask[x: x + s, y: y + s] for x, y in xy_batch])
                 outputs = outputs.astype(np.float32)
@@ -346,7 +352,7 @@ class Model:
     def predict_image_mask(self, im: Image) -> np.ndarray:
         self.net.eval()
         # FIXME - some copy-paste
-        w, h = im.data.shape[:2]
+        w, h = im.size
         b = self.hps.patch_border
         s = self.hps.patch_inner
         xs = range(b, w - (b + s), s)
@@ -357,9 +363,8 @@ class Model:
         for xy_batch in tqdm.tqdm(
                 list(utils.chunks(all_xy, self.hps.batch_size))):
             inputs = np.array(
-                [im.data[x - b: x + s + b, y - b: y + s + b, :]
-                 for x, y in xy_batch])
-            inputs = inputs.transpose([0, 3, 1, 2]).astype(np.float32)
+                [im.data[:, x - b: x + s + b, y - b: y + s + b]
+                 for x, y in xy_batch]).astype(np.float32)
             y_pred = self.net(Variable(torch.from_numpy(inputs)))
             for (x, y), mask in zip(xy_batch, y_pred.data.numpy()):
                 pred_mask[x: x + s, y: y + s] = mask
