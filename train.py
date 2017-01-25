@@ -74,7 +74,7 @@ class MiniNet(BaseNet):
     def forward(self, x):
         x = F.relu(self.conv1(x))
         x = F.relu(self.conv2(x))
-        x = F.relu(self.conv3(x))
+        x = self.conv3(x)
         b = self.hps.patch_border
         return F.sigmoid(x[:, 0, b:-b, b:-b])
 
@@ -92,7 +92,7 @@ class DefaultNet(BaseNet):
         x = F.relu(self.conv1(x))
         x = F.relu(self.conv2(x))
         x = F.relu(self.conv3(x))
-        x = F.relu(self.conv4(x))
+        x = self.conv4(x)
         b = self.hps.patch_border
         return F.sigmoid(x[:, 0, b:-b, b:-b])
 
