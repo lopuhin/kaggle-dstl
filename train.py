@@ -34,7 +34,7 @@ class HyperParams:
     total_classes = 10
     thresholds = attr.ib(default=[0.2, 0.3, 0.4, 0.5, 0.6])
 
-    patch_inner = attr.ib(default=32)
+    patch_inner = attr.ib(default=64)
     patch_border = attr.ib(default=16)
 
     dropout_keep_prob = attr.ib(default=0.0)  # TODO
@@ -67,7 +67,6 @@ class MiniNet(BaseNet):
     def __init__(self, hps):
         super().__init__(hps)
         self.conv1 = nn.Conv2d(hps.n_channels, 4, 1)
-        # FIXME - padding is not really needed
         self.conv2 = nn.Conv2d(4, 8, 3, padding=1)
         self.conv3 = nn.Conv2d(8, 1, 3, padding=1)
 
@@ -79,10 +78,9 @@ class MiniNet(BaseNet):
         return F.sigmoid(x[:, 0, b:-b, b:-b])
 
 
-class DefaultNet(BaseNet):
+class OldNet(BaseNet):
     def __init__(self, hps):
         super().__init__(hps)
-        # FIXME - padding is not really needed
         self.conv1 = nn.Conv2d(hps.n_channels, 64, 5, padding=2)
         self.conv2 = nn.Conv2d(64, 64, 5, padding=2)
         self.conv3 = nn.Conv2d(64, 64, 5, padding=2)
@@ -95,6 +93,58 @@ class DefaultNet(BaseNet):
         x = self.conv4(x)
         b = self.hps.patch_border
         return F.sigmoid(x[:, 0, b:-b, b:-b])
+
+
+class SmallNet(BaseNet):
+    def __init__(self, hps):
+        super().__init__(hps)
+        self.conv1 = nn.Conv2d(hps.n_channels, 16, 1)
+        self.conv2 = nn.Conv2d(16, 32, 3, padding=1)
+        self.conv3 = nn.Conv2d(32, 32, 3, padding=1)
+        self.conv4 = nn.Conv2d(32, 1, 3, padding=1)
+
+    def forward(self, x):
+        x = F.relu(self.conv1(x))
+        x = F.relu(self.conv2(x))
+        x = F.relu(self.conv3(x))
+        x = self.conv4(x)
+        b = self.hps.patch_border
+        return F.sigmoid(x[:, 0, b:-b, b:-b])
+
+
+# UNet:
+# http://lmb.informatik.uni-freiburg.de/people/ronneber/u-net/u-net-architecture.png
+
+
+class SmallUNet(BaseNet):
+    def __init__(self, hps):
+        super().__init__(hps)
+        self.conv1 = nn.Conv2d(hps.n_channels, 64, 3, padding=1)
+        self.conv2 = nn.Conv2d(64, 64, 3, padding=1)
+        self.pool = nn.MaxPool2d(2, 2)
+        self.conv3 = nn.Conv2d(64, 128, 3, padding=1)
+        self.conv4 = nn.Conv2d(128, 128, 3, padding=1)
+        self.conv5 = nn.Conv2d(128, 128, 3, padding=1)
+        self.conv6 = nn.Conv2d(128, 64, 3, padding=1)
+        self.conv7 = nn.Conv2d(64, 1, 3, padding=1)
+
+    def forward(self, x):
+        x = F.relu(self.conv1(x))
+        x = F.relu(self.conv2(x))
+        x1 = self.pool(x)
+        x1 = F.relu(self.conv3(x1))
+        x1 = F.relu(self.conv4(x1))
+        x1 = F.relu(self.conv5(x1))
+        # repeat is missing: https://github.com/pytorch/pytorch/issues/440
+        x1 = x1.repeat(1, 1, 2, 2)
+        x = torch.cat([x, x1], 1)
+        x = F.relu(self.conv6(x))
+        x = self.conv7(x)
+        b = self.hps.patch_border
+        return F.sigmoid(x[:, 0, b:-b, b:-b])
+
+
+DefaultNet = OldNet
 
 
 @attr.s
