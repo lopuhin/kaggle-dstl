@@ -39,6 +39,7 @@ def main():
         header = next(reader)
         image_ids = [im_id for im_id, cls, _ in reader if cls == '1']
 
+    assert args.output.endswith('.csv')
     store = Path(args.output.split('.csv')[0])
     store.mkdir(exist_ok=True)
 
