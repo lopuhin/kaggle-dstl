@@ -6,7 +6,7 @@ from multiprocessing.pool import ThreadPool
 from pprint import pprint
 import random
 import time
-from typing import Callable, Dict, List
+from typing import List
 
 import attr
 import numpy as np
@@ -42,7 +42,7 @@ class HyperParams:
 
     n_epochs = attr.ib(default=30)
     oversample = attr.ib(default=0.0)
-    learning_rate = attr.ib(default=0.0001)
+    lr = attr.ib(default=0.0001)
     batch_size = attr.ib(default=128)
 
     def update(self, hps_string: str):
@@ -114,16 +114,17 @@ class Model:
         self.hps = hps
         self.net = globals()[hps.net](hps)
         self.criterion = nn.BCELoss()
-        self.optimizer = optim.Adam(self.net.parameters(), lr=hps.learning_rate)
+        self.optimizer = optim.Adam(self.net.parameters(), lr=hps.lr)
         self.tb_logger = None  # type: tensorboard_logger.Logger
         self.on_gpu = torch.cuda.is_available()
         if self.on_gpu:
             self.net.cuda()
 
+    def _var(self, x):
+        return Variable(x.cuda() if self.on_gpu else x)
+
     def train_step(self, x, y):
-        if self.on_gpu:
-            x, y = x.cuda(), y.cuda()
-        x, y = Variable(x), Variable(y)
+        x, y = self._var(x), self._var(y)
         self.optimizer.zero_grad()
         y_pred = self.net(x)
         batch_size = x.size()[0]
@@ -259,18 +260,16 @@ class Model:
                 ))
 
         t0 = time.time()
-        log_step = 100
-        with ThreadPool(processes=4) as pool:  # FIXME
-           #for i, (x, y) in enumerate(pool.imap_unordered(
-           #        gen_batch, range(n_batches), chunksize=100)):  # FIXME
-            for i in range(n_batches):
-                x, y = gen_batch(i)
+        log_step = 20
+        with ThreadPool(processes=4) as pool:
+            for i, (x, y) in enumerate(pool.imap_unordered(
+                    gen_batch, range(n_batches), chunksize=10)):
                 if losses and i % log_step == 0:
                     self._log_value(
                         'loss/cls-{}'.format(self.hps.cls),
                         np.mean(losses[-log_step:]))
-                    pred_y = self.net(Variable(x)).data
-                    self._update_jaccard(tp_fp_fn, y.numpy(), pred_y.numpy())
+                    pred_y = self.net(self._var(x)).data.cpu().numpy()
+                    self._update_jaccard(tp_fp_fn, y.numpy(), pred_y)
                     self._log_jaccard(tp_fp_fn)
                 loss = self.train_step(x, y)
                 losses.append(loss)
@@ -340,11 +339,11 @@ class Model:
                 outputs = np.array(
                     [im.mask[x: x + s, y: y + s] for x, y in xy_batch])
                 outputs = outputs.astype(np.float32)
-                y_pred = self.net(Variable(torch.from_numpy(inputs)))
+                y_pred = self.net(self._var(torch.from_numpy(inputs)))
                 loss = self.criterion(
-                    y_pred, Variable(torch.from_numpy(outputs)))
+                    y_pred, self._var(torch.from_numpy(outputs)))
                 losses.append(loss.data[0])
-                y_pred_numpy = y_pred.data.numpy()
+                y_pred_numpy = y_pred.data.cpu().numpy()
                 for (x, y), mask in zip(xy_batch, y_pred_numpy):
                     pred_mask[x: x + s, y: y + s] = mask
                 self._update_jaccard(tp_fp_fn, outputs, y_pred_numpy)
@@ -389,8 +388,8 @@ class Model:
             inputs = np.array(
                 [im.data[:, x - b: x + s + b, y - b: y + s + b]
                  for x, y in xy_batch]).astype(np.float32)
-            y_pred = self.net(Variable(torch.from_numpy(inputs)))
-            for (x, y), mask in zip(xy_batch, y_pred.data.numpy()):
+            y_pred = self.net(self._var(torch.from_numpy(inputs)))
+            for (x, y), mask in zip(xy_batch, y_pred.data.cpu().numpy()):
                 pred_mask[x: x + s, y: y + s] = mask
         return pred_mask
 
@@ -403,7 +402,7 @@ def main():
     arg('--hps', type=str, help='Change hyperparameters in k1=v1,k2=v2 format')
     arg('--all', action='store_true',
         help='Train on all images without validation')
-    arg('--stratified', action='store_true', help='stratified train/valid split')
+    arg('--stratified', type=int, default=1, help='stratified train/valid split')
     arg('--only', type=str,
         help='Train on this image ids only (comma-separated) without validation')
     args = parser.parse_args()
