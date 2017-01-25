@@ -41,7 +41,7 @@ def get_wkt_data() -> Dict[str, Dict[int, str]]:
     return _wkt_data
 
 
-def load_image(im_id: str, rgb_only=False) -> np.ndarray:
+def load_image(im_id: str, rgb_only=False, align=True) -> np.ndarray:
     im_rgb = tiff.imread('./three_band/{}.tif'.format(im_id)).transpose([1, 2, 0])
     if rgb_only:
         return im_rgb
@@ -54,19 +54,20 @@ def load_image(im_id: str, rgb_only=False) -> np.ndarray:
     im_p = np.expand_dims(im_p, 2)
     im_m = cv2.resize(im_m, (w, h), interpolation=cv2.INTER_CUBIC)
     im_a = cv2.resize(im_a, (w, h), interpolation=cv2.INTER_CUBIC)
-    logger.info('Getting alignment')
-    try:
-        warp_matrix = _get_alignment(im_rgb, im_p)
-    except cv2.error as e:
-        logger.info('Error getting alignment: {}'.format(e))
-    else:
-        logger.info('Got alignment: {}'
-                    .format(str(warp_matrix).replace('\n', '')))
-        im_p = np.expand_dims(_apply_alignment(im_p, warp_matrix), 2)
-        # FIXME - other images might also be mis-aligned,
-        # but they have lower resolution, so should be less important
-        im_m = _apply_alignment(im_m, warp_matrix)
-        im_a = _apply_alignment(im_a, warp_matrix)
+    if align:
+        logger.info('Getting alignment')
+        try:
+            warp_matrix = _get_alignment(im_rgb, im_p)
+        except cv2.error as e:
+            logger.info('Error getting alignment: {}'.format(e))
+        else:
+            logger.info('Got alignment: {}'
+                        .format(str(warp_matrix).replace('\n', '')))
+            im_p = np.expand_dims(_apply_alignment(im_p, warp_matrix), 2)
+            # FIXME - other images might also be mis-aligned,
+            # but they have lower resolution, so should be less important
+            im_m = _apply_alignment(im_m, warp_matrix)
+            im_a = _apply_alignment(im_a, warp_matrix)
     return np.concatenate([im_rgb, im_p, im_m, im_a], axis=2)
 
 
