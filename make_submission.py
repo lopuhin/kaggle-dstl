@@ -27,6 +27,7 @@ def main():
     arg('--only', help='Only predict these image ids (comma-separated)')
     arg('--threshold', type=float, default=0.5)
     arg('--epsilon', type=float, default=5.0, help='smoothing')
+    arg('--masks-only', action='store_true', help='Do only mask prediction')
     args = parser.parse_args()
     hps = HyperParams(**json.loads(
         Path(args.logdir).joinpath('hps.json').read_text()))
@@ -37,6 +38,7 @@ def main():
         header = next(reader)
         image_ids = [im_id for im_id, cls, _ in reader if cls == '1']
 
+    assert args.output.endswith('.csv')
     store = Path(args.output.split('.csv')[0])
     store.mkdir(exist_ok=True)
 
@@ -57,6 +59,10 @@ def main():
         assert mask.shape == im.data.shape[:2]
         with im_path.open('wb') as f:
             np.save(f, mask)
+
+    if args.masks_only:
+        logger.info('Was building masks only, done.')
+        return
 
     logger.info('Building polygons')
     with open(args.output, 'wt') as f:
