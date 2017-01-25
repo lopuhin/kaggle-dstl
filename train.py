@@ -60,7 +60,7 @@ class BaseNet(nn.Module):
     def __init__(self, hps: HyperParams):
         super().__init__()
         self.hps = hps
-        self.register_buffer('global_step', torch.IntTensor(1))
+        self.register_buffer('global_step', torch.IntTensor(1).zero_())
 
 
 class MiniNet(BaseNet):
