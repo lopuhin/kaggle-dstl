@@ -192,7 +192,7 @@ class Model:
             intersection = (y_pred * y).sum()
             union = y_pred.sum() + y.sum()
             if union[0] != 0:
-                loss += self.hps.jaccard_loss * intersection / union
+                loss += self.hps.jaccard_loss * (1 - intersection / union)
         return loss
 
     def train(self, logdir: Path, train_ids: List[str], valid_ids: List[str]):
