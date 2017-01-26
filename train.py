@@ -276,7 +276,7 @@ class Model:
                 im, (x, y) = self.sample_im_xy(train_images)
                 if random.random() < self.hps.oversample:
                     # TODO - something less stupid?
-                    for _ in range(100):
+                    for _ in range(1000):
                         if im.mask[x - m: x + s + m, y - m: y + s + m].sum():
                             break
                         im, (x, y) = self.sample_im_xy(train_images)
