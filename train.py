@@ -180,16 +180,20 @@ class Model:
         self.optimizer.zero_grad()
         y_pred = self.net(x)
         batch_size = x.size()[0]
+        loss = self.loss(y, y_pred)
+        (loss * batch_size).backward()
+        self.optimizer.step()
+        self.net.global_step += 1
+        return loss.data[0]
+
+    def loss(self, y, y_pred):
         loss = self.bce_loss(y_pred, y)
         if self.hps.jaccard_loss:
             intersection = (y_pred * y).sum()
             union = y_pred.sum() + y.sum()
             if union[0] != 0:
                 loss += self.hps.jaccard_loss * intersection / union
-        (loss * batch_size).backward()
-        self.optimizer.step()
-        self.net.global_step += 1
-        return loss.data[0]
+        return loss
 
     def train(self, logdir: Path, train_ids: List[str], valid_ids: List[str]):
         self.tb_logger = tensorboard_logger.Logger(str(logdir))
@@ -419,8 +423,8 @@ class Model:
                     [im.mask[x: x + s, y: y + s] for x, y in xy_batch])
                 outputs = outputs.astype(np.float32)
                 y_pred = self.net(self._var(torch.from_numpy(inputs)))
-                loss = self.criterion(
-                    y_pred, self._var(torch.from_numpy(outputs)))
+                loss = self.loss(
+                    self._var(torch.from_numpy(outputs)), y_pred)
                 losses.append(loss.data[0])
                 y_pred_numpy = y_pred.data.cpu().numpy()
                 for (x, y), mask in zip(xy_batch, y_pred_numpy):
