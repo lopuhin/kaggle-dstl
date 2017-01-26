@@ -9,6 +9,7 @@ import time
 from typing import List
 
 import attr
+import cv2
 import numpy as np
 from sklearn.model_selection import GroupShuffleSplit
 import tensorboard_logger
@@ -166,6 +167,7 @@ class Model:
         self.criterion = nn.BCELoss()
         self.optimizer = optim.Adam(self.net.parameters(), lr=hps.lr)
         self.tb_logger = None  # type: tensorboard_logger.Logger
+        self.logdir = None  # type: Path
         self.on_gpu = torch.cuda.is_available()
         if self.on_gpu:
             self.net.cuda()
@@ -184,8 +186,9 @@ class Model:
         self.net.global_step += 1
         return loss.data[0]
 
-    def train(self, logdir: str, train_ids: List[str], valid_ids: List[str]):
-        self.tb_logger = tensorboard_logger.Logger(logdir)
+    def train(self, logdir: Path, train_ids: List[str], valid_ids: List[str]):
+        self.tb_logger = tensorboard_logger.Logger(str(logdir))
+        self.logdir = logdir
         train_images = [self.load_image(im_id) for im_id in sorted(train_ids)]
         valid_images = None
         n_epoch = self.restore_snapshot(logdir)
@@ -199,8 +202,9 @@ class Model:
                                     for im_id in sorted(valid_ids)]
                 if valid_images:
                     self.validate_on_images(valid_images, subsample=subsample)
-            self.save_snapshot(logdir, n_epoch)
+            self.save_snapshot(n_epoch)
         self.tb_logger = None
+        self.logdir = None
 
     def preprocess_image(self, im_data: np.ndarray) -> np.ndarray:
         # mean = np.mean(im_data, axis=(0, 1))
@@ -311,6 +315,7 @@ class Model:
 
         t0 = time.time()
         log_step = 20
+        im_log_step = log_step * 10
         with ThreadPool(processes=4) as pool:
             for i, (x, y) in enumerate(pool.imap_unordered(
                     gen_batch, range(n_batches), chunksize=10)):
@@ -321,6 +326,8 @@ class Model:
                     pred_y = self.net(self._var(x)).data.cpu().numpy()
                     self._update_jaccard(tp_fp_fn, y.numpy(), pred_y)
                     self._log_jaccard(tp_fp_fn)
+                    if i % im_log_step == 0:
+                        self._log_im(x.numpy(), y.numpy(), pred_y)
                 loss = self.train_step(x, y)
                 losses.append(loss)
                 t1 = time.time()
@@ -363,6 +370,23 @@ class Model:
                 threshold, self._jaccard(tp, fp, fn))
             for threshold, (tp, fp, fn) in sorted(tp_fp_fn.items()))
 
+    def _log_im(self, xs: np.ndarray, ys: np.ndarray, pred_ys: np.ndarray,
+                max_images=16):
+        b = self.hps.patch_border
+        s = self.hps.patch_inner
+        border = np.zeros([b * 2 + s, b * 2 + s, 3], dtype=np.float32)
+        border[b, b:-b, :] = border[-b, b:-b, :] = 1
+        border[b:-b, b, :] = border[b:-b, -b, :] = 1
+        border[-b, -b, :] = 1
+        step = str(self.net.global_step[0]).zfill(6)
+        for i, (x, y, p) in enumerate(zip(xs[:max_images], ys, pred_ys)):
+            prefix = '{}_{}'.format(step, str(i).zfill(2))
+            fname = lambda s: str(self.logdir / ('{}_{}.png'.format(prefix, s)))
+            rgb = utils.scale_percentile(x[:3].transpose(1, 2, 0))
+            cv2.imwrite(fname('x'), np.maximum(border, rgb) * 255)
+            cv2.imwrite(fname('y'), y * 255)
+            cv2.imwrite(fname('p'), p * 255)
+
     def _log_value(self, name, value):
         self.tb_logger.log_value(name, value, step=self.net.global_step[0])
 
@@ -404,7 +428,7 @@ class Model:
             'valid-loss/cls-{}'.format(self.hps.cls), loss)
         self._log_jaccard(tp_fp_fn, prefix='valid-')
 
-    def restore_snapshot(self, logdir: str) -> int:
+    def restore_snapshot(self, logdir: Path) -> int:
         for n_epoch in reversed(range(self.hps.n_epochs)):
             model_path = self._model_path(logdir, n_epoch)
             if Path(model_path).exists():
@@ -414,13 +438,13 @@ class Model:
                 return n_epoch + 1
         return 0
 
-    def save_snapshot(self, logdir: str, n_epoch: int):
-        model_path = self._model_path(logdir, n_epoch)
+    def save_snapshot(self, n_epoch: int):
+        model_path = self._model_path(self.logdir, n_epoch)
         logger.info('Saving snapshot {}'.format(model_path))
         torch.save(self.net.state_dict(), model_path)
 
-    def _model_path(self, logdir: str, n_epoch: int) -> str:
-        return str(Path(logdir) / ('model-{}'.format(n_epoch)))
+    def _model_path(self, logdir: Path, n_epoch: int) -> str:
+        return str(logdir.joinpath('model-{}'.format(n_epoch)))
 
     def predict_image_mask(self, im: Image) -> np.ndarray:
         self.net.eval()
@@ -455,12 +479,17 @@ def main():
     arg('--stratified', type=int, default=1, help='stratified train/valid split')
     arg('--only', type=str,
         help='Train on this image ids only (comma-separated) without validation')
+    arg('--clean', action='store_true', help='Clean logdir')
     args = parser.parse_args()
     hps = HyperParams(args.cls)
     hps.update(args.hps)
     pprint(attr.asdict(hps))
-    Path(args.logdir).mkdir(exist_ok=True)
-    Path(args.logdir).joinpath('hps.json').write_text(
+    logdir = Path(args.logdir)
+    logdir.mkdir(exist_ok=True)
+    if args.clean:
+        for p in logdir.iterdir():
+            p.unlink()
+    logdir.joinpath('hps.json').write_text(
         json.dumps(attr.asdict(hps), indent=True, sort_keys=True))
 
     model = Model(hps=hps)
@@ -503,7 +532,7 @@ def main():
             GroupShuffleSplit(random_state=1).split(all_im_ids, groups=labels))]
         logger.info('Train: {}'.format(' '.join(sorted(train_ids))))
         logger.info('Valid: {}'.format(' '.join(sorted(valid_ids))))
-    model.train(logdir=args.logdir, train_ids=train_ids, valid_ids=valid_ids)
+    model.train(logdir=logdir, train_ids=train_ids, valid_ids=valid_ids)
 
 
 if __name__ == '__main__':
