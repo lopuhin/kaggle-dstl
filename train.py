@@ -39,7 +39,7 @@ class HyperParams:
     patch_border = attr.ib(default=16)
 
     dropout_keep_prob = attr.ib(default=0.0)  # TODO
-    jaccard_loss = attr.ib(default=0)  # TODO
+    jaccard_loss = attr.ib(default=0)
 
     n_epochs = attr.ib(default=30)
     oversample = attr.ib(default=0.0)
@@ -164,7 +164,7 @@ class Model:
     def __init__(self, hps: HyperParams):
         self.hps = hps
         self.net = globals()[hps.net](hps)
-        self.criterion = nn.BCELoss()
+        self.bce_loss = nn.BCELoss()
         self.optimizer = optim.Adam(self.net.parameters(), lr=hps.lr)
         self.tb_logger = None  # type: tensorboard_logger.Logger
         self.logdir = None  # type: Path
@@ -180,7 +180,12 @@ class Model:
         self.optimizer.zero_grad()
         y_pred = self.net(x)
         batch_size = x.size()[0]
-        loss = self.criterion(y_pred, y)
+        loss = self.bce_loss(y_pred, y)
+        if self.hps.jaccard_loss:
+            intersection = (y_pred * y).sum()
+            union = y_pred.sum() + y.sum()
+            if union[0] != 0:
+                loss += self.hps.jaccard_loss * intersection / union
         (loss * batch_size).backward()
         self.optimizer.step()
         self.net.global_step += 1
