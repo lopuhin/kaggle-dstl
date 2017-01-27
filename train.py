@@ -100,16 +100,21 @@ class OldNet(BaseNet):
 class SmallNet(BaseNet):
     def __init__(self, hps):
         super().__init__(hps)
-        self.conv1 = nn.Conv2d(hps.n_channels, 16, 1)
-        self.conv2 = nn.Conv2d(16, 32, 3, padding=1)
-        self.conv3 = nn.Conv2d(32, 32, 3, padding=1)
-        self.conv4 = nn.Conv2d(32, 1, 3, padding=1)
+        self.conv1 = nn.Conv2d(hps.n_channels, 64, 3, padding=1)
+        self.conv2 = nn.Conv2d(64, 64, 3, padding=1)
+        self.conv3 = nn.Conv2d(64, 64, 3, padding=1)
+        self.conv3 = nn.Conv2d(64, 64, 3, padding=1)
+        self.conv4 = nn.Conv2d(64, 32, 3, padding=1)
+        self.conv5 = nn.Conv2d(32, 1, 3, padding=1)
+        # TODO - try as well
+        # self.conv5 = nn.Conv2d(32, 1, 7, padding=2)
 
     def forward(self, x):
         x = F.relu(self.conv1(x))
         x = F.relu(self.conv2(x))
         x = F.relu(self.conv3(x))
-        x = self.conv4(x)
+        x = F.relu(self.conv4(x))
+        x = self.conv5(x)
         b = self.hps.patch_border
         return F.sigmoid(x[:, 0, b:-b, b:-b])
 
@@ -126,7 +131,8 @@ class SmallUNet(BaseNet):
         self.pool = nn.MaxPool2d(2, 2)
         self.conv3 = nn.Conv2d(64, 128, 3, padding=1)
         self.conv4 = nn.Conv2d(128, 128, 3, padding=1)
-        self.conv5 = nn.Conv2d(128, 128, 3, padding=1)
+        self.conv5 = nn.Conv2d(128, 64, 3, padding=1)
+        self.deconv = nn.ConvTranspose2d(64, 64, 3, stride=2, padding=1)
         self.conv6 = nn.Conv2d(128, 64, 3, padding=1)
         self.conv7 = nn.Conv2d(64, 1, 3, padding=1)
 
@@ -138,7 +144,9 @@ class SmallUNet(BaseNet):
         x1 = F.relu(self.conv4(x1))
         x1 = F.relu(self.conv5(x1))
         # repeat is missing: https://github.com/pytorch/pytorch/issues/440
-        x1 = x1.repeat(1, 1, 2, 2)
+        # x1 = x1.repeat(1, 1, 2, 2)
+        # do deconv instead
+        x1 = self.deconv(x1, output_size=x.size())
         x = torch.cat([x, x1], 1)
         x = F.relu(self.conv6(x))
         x = self.conv7(x)
@@ -260,6 +268,8 @@ class Model:
                 dtype=np.uint8)
             with mask_path.open('wb') as f:
                 np.save(f, mask)
+        if self.hps.n_channels != im_data.shape[0]:
+            im_data = im_data[:self.hps.n_channels]
         return Image(im_id, im_data, mask[self.hps.cls])
 
     def train_on_images(self, train_images: List[Image], subsample: int=1,
