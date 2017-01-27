@@ -102,12 +102,9 @@ class SmallNet(BaseNet):
         super().__init__(hps)
         self.conv1 = nn.Conv2d(hps.n_channels, 64, 3, padding=1)
         self.conv2 = nn.Conv2d(64, 64, 3, padding=1)
-        self.conv3 = nn.Conv2d(64, 64, 3, padding=1)
-        self.conv3 = nn.Conv2d(64, 64, 3, padding=1)
-        self.conv4 = nn.Conv2d(64, 32, 3, padding=1)
-        self.conv5 = nn.Conv2d(32, 1, 3, padding=1)
-        # TODO - try as well
-        # self.conv5 = nn.Conv2d(32, 1, 7, padding=2)
+        self.conv3 = nn.Conv2d(64, 128, 3, padding=1)
+        self.conv4 = nn.Conv2d(128, 256, 3, padding=1)
+        self.conv5 = nn.Conv2d(256, 1, 1, padding=0)
 
     def forward(self, x):
         x = F.relu(self.conv1(x))
@@ -342,7 +339,7 @@ class Model:
                 ))
 
         t0 = time.time()
-        log_step = 20
+        log_step = 40
         im_log_step = n_batches // log_step * log_step
         with ThreadPool(processes=4) as pool:
             map_ = map if no_mp else partial(pool.imap_unordered, chunksize=4)
