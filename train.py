@@ -174,10 +174,7 @@ class Model:
             self.net.cuda()
 
     def _var(self, x):
-        return Variable(self._to_gpu(x))
-
-    def _to_gpu(self, x):
-        return x.cuda() if self.on_gpu and not x.is_cuda else x
+        return Variable(x.cuda() if self.on_gpu else x)
 
     def train_step(self, x, y):
         x, y = self._var(x), self._var(y)
@@ -305,8 +302,8 @@ class Model:
                 inputs.append(patch[:, m: -m, m: -m])
                 outputs.append(mask[m: -m, m: -m])
 
-            return (self._to_gpu(torch.from_numpy(np.array(inputs))),
-                    self._to_gpu(torch.from_numpy(np.array(outputs))))
+            return (torch.from_numpy(np.array(inputs)),
+                    torch.from_numpy(np.array(outputs)))
 
         self._train_on_feeds(gen_batch, n_batches, no_mp=no_mp)
 
@@ -345,11 +342,10 @@ class Model:
                         'loss/cls-{}'.format(self.hps.cls),
                         np.mean(losses[-log_step:]))
                     pred_y = self.net(self._var(x)).data.cpu().numpy()
-                    x_numpy, y_numpy = x.cpu().numpy(), y.cpu().numpy()
-                    self._update_jaccard(tp_fp_fn, y_numpy, pred_y)
+                    self._update_jaccard(tp_fp_fn, y.numpy(), pred_y)
                     self._log_jaccard(tp_fp_fn)
                     if i == im_log_step:
-                        self._log_im(x_numpy, y_numpy, pred_y)
+                        self._log_im(x.numpy(), y.numpy(), pred_y)
                 loss = self.train_step(x, y)
                 losses.append(loss)
                 t1 = time.time()
