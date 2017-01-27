@@ -203,7 +203,7 @@ class Model:
         n_epoch = self.restore_snapshot(logdir)
         for n_epoch in range(n_epoch, self.hps.n_epochs):
             logger.info('Epoch {}, training'.format(n_epoch + 1))
-            subsample = 10
+            subsample = 4  # make validation more often
             for _ in range(subsample):
                 self.train_on_images(train_images, subsample=subsample)
                 if valid_images is None:
@@ -275,9 +275,8 @@ class Model:
             for _ in range(self.hps.batch_size):
                 im, (x, y) = self.sample_im_xy(train_images)
                 if random.random() < self.hps.oversample:
-                    # TODO - something less stupid?
                     for _ in range(1000):
-                        if im.mask[x - m: x + s + m, y - m: y + s + m].sum():
+                        if im.mask[x: x + s, y: y + s].sum():
                             break
                         im, (x, y) = self.sample_im_xy(train_images)
                 patch = im.data[:, x - mb: x + s + mb, y - mb: y + s + mb]
@@ -324,7 +323,7 @@ class Model:
 
         t0 = time.time()
         log_step = 20
-        im_log_step = log_step * 10
+        im_log_step = n_batches // log_step * log_step
         with ThreadPool(processes=4) as pool:
             for i, (x, y) in enumerate(pool.imap_unordered(
                     gen_batch, range(n_batches), chunksize=10)):
@@ -335,7 +334,7 @@ class Model:
                     pred_y = self.net(self._var(x)).data.cpu().numpy()
                     self._update_jaccard(tp_fp_fn, y.numpy(), pred_y)
                     self._log_jaccard(tp_fp_fn)
-                    if i % im_log_step == 0:
+                    if i == im_log_step:
                         self._log_im(x.numpy(), y.numpy(), pred_y)
                 loss = self.train_step(x, y)
                 losses.append(loss)
@@ -379,22 +378,19 @@ class Model:
                 threshold, self._jaccard(tp, fp, fn))
             for threshold, (tp, fp, fn) in sorted(tp_fp_fn.items()))
 
-    def _log_im(self, xs: np.ndarray, ys: np.ndarray, pred_ys: np.ndarray,
-                max_images=16):
+    def _log_im(self, xs: np.ndarray, ys: np.ndarray, pred_ys: np.ndarray):
         b = self.hps.patch_border
         s = self.hps.patch_inner
         border = np.zeros([b * 2 + s, b * 2 + s, 3], dtype=np.float32)
         border[b, b:-b, :] = border[-b, b:-b, :] = 1
         border[b:-b, b, :] = border[b:-b, -b, :] = 1
         border[-b, -b, :] = 1
-        step = str(self.net.global_step[0]).zfill(6)
-        for i, (x, y, p) in enumerate(zip(xs[:max_images], ys, pred_ys)):
-            prefix = '{}_{}'.format(step, str(i).zfill(2))
-            fname = lambda s: str(self.logdir / ('{}_{}.png'.format(prefix, s)))
+        for i, (x, y, p) in enumerate(zip(xs, ys, pred_ys)):
+            fname = lambda s: str(self.logdir / ('{:0>3}_{}.png'.format(i, s)))
             rgb = utils.scale_percentile(x[:3].transpose(1, 2, 0))
             cv2.imwrite(fname('x'), np.maximum(border, rgb) * 255)
             cv2.imwrite(fname('y'), y * 255)
-            cv2.imwrite(fname('p'), p * 255)
+            cv2.imwrite(fname('z'), p * 255)
 
     def _log_value(self, name, value):
         self.tb_logger.log_value(name, value, step=self.net.global_step[0])
