@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import json
+from functools import partial
 from pathlib import Path
 from multiprocessing.pool import ThreadPool
 from pprint import pprint
@@ -195,7 +196,8 @@ class Model:
                 loss += self.hps.jaccard_loss * (1 - intersection / union)
         return loss
 
-    def train(self, logdir: Path, train_ids: List[str], valid_ids: List[str]):
+    def train(self, logdir: Path, train_ids: List[str], valid_ids: List[str],
+              no_mp: bool=False):
         self.tb_logger = tensorboard_logger.Logger(str(logdir))
         self.logdir = logdir
         train_images = [self.load_image(im_id) for im_id in sorted(train_ids)]
@@ -205,7 +207,8 @@ class Model:
             logger.info('Epoch {}, training'.format(n_epoch + 1))
             subsample = 4  # make validation more often
             for _ in range(subsample):
-                self.train_on_images(train_images, subsample=subsample)
+                self.train_on_images(train_images, subsample=subsample,
+                                     no_mp=no_mp)
                 if valid_images is None:
                     valid_images = [self.load_image(im_id)
                                     for im_id in sorted(valid_ids)]
@@ -259,7 +262,8 @@ class Model:
                 np.save(f, mask)
         return Image(im_id, im_data, mask[self.hps.cls])
 
-    def train_on_images(self, train_images: List[Image], subsample: int=1):
+    def train_on_images(self, train_images: List[Image], subsample: int=1,
+                        no_mp: bool=False):
         self.net.train()
         b = self.hps.patch_border
         s = self.hps.patch_inner
@@ -281,9 +285,15 @@ class Model:
                         im, (x, y) = self.sample_im_xy(train_images)
                 patch = im.data[:, x - mb: x + s + mb, y - mb: y + s + mb]
                 mask = im.mask[x - m: x + s + m, y - m: y + s + m]
-                # TODO - mirror flips
+                # mirror flips
+                if random.random() < 0.5:
+                    patch = np.flip(patch, 1)
+                    mask = np.flip(mask, 0)
+                if random.random() < 0.5:
+                    patch = np.flip(patch, 2)
+                    mask = np.flip(mask, 1)
                 angle = random.random() * 360
-                # TODO - do it without transpose?
+                # rotations
                 patch = (
                     utils.rotated(
                         patch.transpose([1, 2, 0]).astype(np.float32), angle)
@@ -295,7 +305,7 @@ class Model:
             return (torch.from_numpy(np.array(inputs)),
                     torch.from_numpy(np.array(outputs)))
 
-        self._train_on_feeds(gen_batch, n_batches)
+        self._train_on_feeds(gen_batch, n_batches, no_mp=no_mp)
 
     def sample_im_xy(self, train_images):
         b = self.hps.patch_border
@@ -308,7 +318,7 @@ class Model:
         return im, (random.randint(mb, w - (mb + s)),
                     random.randint(mb, h - (mb + s)))
 
-    def _train_on_feeds(self, gen_batch, n_batches: int):
+    def _train_on_feeds(self, gen_batch, n_batches: int, no_mp: bool):
         losses = []
         tp_fp_fn = self._jaccard_store()
 
@@ -325,8 +335,8 @@ class Model:
         log_step = 20
         im_log_step = n_batches // log_step * log_step
         with ThreadPool(processes=4) as pool:
-            for i, (x, y) in enumerate(pool.imap_unordered(
-                    gen_batch, range(n_batches), chunksize=10)):
+            map_ = map if no_mp else partial(pool.imap_unordered, chunksize=4)
+            for i, (x, y) in enumerate(map_(gen_batch, range(n_batches))):
                 if losses and i % log_step == 0:
                     self._log_value(
                         'loss/cls-{}'.format(self.hps.cls),
@@ -485,12 +495,13 @@ def main():
     arg('--only', type=str,
         help='Train on this image ids only (comma-separated) without validation')
     arg('--clean', action='store_true', help='Clean logdir')
+    arg('--no-mp', action='store_true', help='Disable multiprocessing')
     args = parser.parse_args()
     hps = HyperParams(args.cls)
     hps.update(args.hps)
     pprint(attr.asdict(hps))
     logdir = Path(args.logdir)
-    logdir.mkdir(exist_ok=True)
+    logdir.mkdir(exist_ok=True, parents=True)
     if args.clean:
         for p in logdir.iterdir():
             p.unlink()
@@ -537,7 +548,8 @@ def main():
             GroupShuffleSplit(random_state=1).split(all_im_ids, groups=labels))]
         logger.info('Train: {}'.format(' '.join(sorted(train_ids))))
         logger.info('Valid: {}'.format(' '.join(sorted(valid_ids))))
-    model.train(logdir=logdir, train_ids=train_ids, valid_ids=valid_ids)
+    model.train(logdir=logdir, train_ids=train_ids, valid_ids=valid_ids,
+                no_mp=args.no_mp)
 
 
 if __name__ == '__main__':
