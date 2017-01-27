@@ -132,7 +132,7 @@ class SmallUNet(BaseNet):
         self.conv3 = nn.Conv2d(64, 128, 3, padding=1)
         self.conv4 = nn.Conv2d(128, 128, 3, padding=1)
         self.conv5 = nn.Conv2d(128, 64, 3, padding=1)
-        self.deconv = nn.ConvTranspose2d(64, 64, 3, stride=2, padding=1)
+        self.deconv = nn.ConvTranspose2d(64, 64, 1, stride=2)
         self.conv6 = nn.Conv2d(128, 64, 3, padding=1)
         self.conv7 = nn.Conv2d(64, 1, 3, padding=1)
 
