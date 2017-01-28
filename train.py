@@ -104,7 +104,7 @@ class SmallNet(BaseNet):
         self.conv2 = nn.Conv2d(64, 64, 3, padding=1)
         self.conv3 = nn.Conv2d(64, 128, 3, padding=1)
         self.conv4 = nn.Conv2d(128, 256, 3, padding=1)
-        self.conv5 = nn.Conv2d(256, 1, 1, padding=0)
+        self.conv5 = nn.Conv2d(256, 1, 3, padding=1)
 
     def forward(self, x):
         x = F.relu(self.conv1(x))
@@ -198,7 +198,7 @@ class Model:
             intersection = (y_pred * y).sum()
             union = y_pred.sum() + y.sum()
             if union[0] != 0:
-                loss += self.hps.jaccard_loss * (1 - intersection / union)
+                loss = loss / self.hps.jaccard_loss + (1 - intersection / union)
         return loss
 
     def train(self, logdir: Path, train_ids: List[str], valid_ids: List[str],
