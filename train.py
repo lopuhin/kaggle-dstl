@@ -126,16 +126,16 @@ class SmallNet(BaseNet):
 class SmallUNet(BaseNet):
     def __init__(self, hps):
         super().__init__(hps)
-        self.conv1 = nn.Conv2d(hps.n_channels, 64, 3, padding=1)
-        self.conv2 = nn.Conv2d(64, 64, 3, padding=1)
+        self.conv1 = nn.Conv2d(hps.n_channels, 32, 3, padding=1)
+        self.conv2 = nn.Conv2d(32, 32, 3, padding=1)
         self.pool = nn.MaxPool2d(2, 2)
-        self.conv3 = nn.Conv2d(64, 128, 3, padding=1)
-        self.conv4 = nn.Conv2d(128, 128, 3, padding=1)
-        self.conv5 = nn.Conv2d(128, 64, 3, padding=1)
+        self.conv3 = nn.Conv2d(32, 64, 3, padding=1)
+        self.conv4 = nn.Conv2d(64, 64, 3, padding=1)
+        self.conv5 = nn.Conv2d(64, 32, 3, padding=1)
         # self.deconv = nn.ConvTranspose2d(64, 64, 1, stride=2)
         self.deconv = nn.ConvTranspose2d(1, 1, 1, stride=2)
-        self.conv6 = nn.Conv2d(128, 64, 3, padding=1)
-        self.conv7 = nn.Conv2d(64, 1, 3, padding=1)
+        self.conv6 = nn.Conv2d(64, 32, 3, padding=1)
+        self.conv7 = nn.Conv2d(32, 1, 3, padding=1)
 
     def forward(self, x):
         x = F.relu(self.conv1(x))
