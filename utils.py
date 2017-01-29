@@ -144,10 +144,12 @@ def mask_for_polygons(
 
 
 def rotated(patch: np.ndarray, angle: float) -> np.ndarray:
+    patch = patch.transpose([1, 2, 0]).astype(np.float32)
     size = patch.shape[:2]
     center = tuple(np.array(size) / 2)
     rot_mat = cv2.getRotationMatrix2D(center, angle, 1.0)
-    return cv2.warpAffine(patch, rot_mat, size, flags=cv2.INTER_LINEAR)
+    patch = cv2.warpAffine(patch, rot_mat, size, flags=cv2.INTER_LINEAR)
+    return patch.transpose([2, 0, 1])
 
 
 def scale_percentile(matrix: np.ndarray) -> np.ndarray:

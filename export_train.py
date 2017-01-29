@@ -25,12 +25,12 @@ def main():
         im_size = im_data.shape[:2]
         poly_by_type = utils.load_polygons(im_id, im_size)
         for poly_type, poly in sorted(poly_by_type.items()):
-            poly_type -= 1
+            cls = poly_type - 1
             mask = utils.mask_for_polygons(im_size, poly)
             cv2.imwrite(
-                str(output.joinpath('{}_mask_{}.png'.format(im_id, poly_type))),
+                str(output.joinpath('{}_mask_{}.png'.format(im_id, cls))),
                 255 * mask)
-            poly_stats.setdefault(im_id, {})[poly_type] = {
+            poly_stats.setdefault(im_id, {})[cls] = {
                 'area': poly.area / (im_size[0] * im_size[1]),
                 'perimeter': int(poly.length),
                 'number': len(poly),
@@ -45,7 +45,7 @@ def main():
             fmt = lambda x: x
         print('\n{}'.format(key))
         print(tabulate.tabulate(
-            [[im_id] + [fmt(s[poly_type][key]) for poly_type in range(10)]
+            [[im_id] + [fmt(s[cls][key]) for cls in range(10)]
              for im_id, s in sorted(poly_stats.items())],
             headers=['im_id'] + list(range(10))))
 
