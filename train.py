@@ -102,18 +102,15 @@ class SmallNet(BaseNet):
         super().__init__(hps)
         self.conv1 = nn.Conv2d(hps.n_channels, 64, 3, padding=1)
         self.conv2 = nn.Conv2d(64, 64, 3, padding=1)
-        self.pool = nn.MaxPool2d(3, 1, padding=1)
-        self.conv3 = nn.Conv2d(64, 128, 3, padding=1)
-        self.conv4 = nn.Conv2d(128, 256, 3, padding=1)
-        self.conv5 = nn.Conv2d(256, 1, 3, padding=1)
+        self.conv3 = nn.Conv2d(64, 64, 3, padding=1)
+        self.conv4 = nn.Conv2d(64, 128, 3, padding=1)
+        self.conv5 = nn.Conv2d(128, 1, 3, padding=1)
 
     def forward(self, x):
         x = F.relu(self.conv1(x))
         x = F.relu(self.conv2(x))
-        x = self.pool(x)
         x = F.relu(self.conv3(x))
         x = F.relu(self.conv4(x))
-        x = self.pool(x)
         x = self.conv5(x)
         b = self.hps.patch_border
         return F.sigmoid(x[:, 0, b:-b, b:-b])
