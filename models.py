@@ -99,6 +99,14 @@ class SmallNet(BaseNet):
         return F.sigmoid(x[:, :, b:-b, b:-b])
 
 
+def upsample2d(x):
+    # repeat is missing: https://github.com/pytorch/pytorch/issues/440
+    # return x.repeat(1, 1, 2, 2)
+    x = torch.stack([x[:, :, i // 2, :] for i in range(x.size()[2] * 2)], 2)
+    x = torch.stack([x[:, :, :, i // 2] for i in range(x.size()[3] * 2)], 3)
+    return x
+
+
 # UNet:
 # http://lmb.informatik.uni-freiburg.de/people/ronneber/u-net/u-net-architecture.png
 
@@ -130,9 +138,67 @@ class SmallUNet(BaseNet):
         return F.sigmoid(x[:, :, b:-b, b:-b])
 
 
-def upsample2d(x):
-    # repeat is missing: https://github.com/pytorch/pytorch/issues/440
-    # return x.repeat(1, 1, 2, 2)
-    x = torch.stack([x[:, :, i // 2, :] for i in range(x.size()[2] * 2)], 2)
-    x = torch.stack([x[:, :, :, i // 2] for i in range(x.size()[3] * 2)], 3)
-    return x
+class UNet(BaseNet):
+    def __init__(self, hps):
+        super().__init__(hps)
+        self.pool = nn.MaxPool2d(2, 2)
+        conv = lambda c_in, c_out: nn.Conv2d(c_in, c_out, 3, padding=1)
+        self.conv1_1 = conv(hps.n_channels, 32)
+        self.conv1_2 = conv(32, 32)
+        self.conv2_1 = conv(32, 64)
+        self.conv2_2 = conv(64, 64)
+        self.conv3_1 = conv(64, 128)
+        self.conv3_2 = conv(128, 128)
+        self.conv4_1 = conv(128, 256)
+        self.conv4_2 = conv(256, 256)
+        self.conv5_1 = conv(256, 512)
+        self.conv5_2 = conv(512, 512)
+        self.conv6_1 = conv(512 + 256, 256)
+        self.conv6_2 = conv(256, 256)
+        self.conv7_1 = conv(256 + 128, 128)
+        self.conv7_2 = conv(128, 128)
+        self.conv8_1 = conv(128 + 64, 64)
+        self.conv8_2 = conv(64, 64)
+        self.conv9_1 = conv(64 + 32, 32)
+        self.conv9_2 = conv(32, 32)
+        self.conv10 = nn.Conv2d(32, hps.n_classes, 1)
+
+    def forward(self, x):
+        x1 = F.relu(self.conv1_1(x))
+        x1 = F.relu(self.conv1_2(x1))
+
+        x2 = self.pool(x1)
+        x2 = F.relu(self.conv2_1(x2))
+        x2 = F.relu(self.conv2_2(x2))
+
+        x3 = self.pool(x2)
+        x3 = F.relu(self.conv3_1(x3))
+        x3 = F.relu(self.conv3_2(x3))
+
+        x4 = self.pool(x3)
+        x4 = F.relu(self.conv4_1(x4))
+        x4 = F.relu(self.conv4_2(x4))
+
+        x5 = self.pool(x4)
+        x5 = F.relu(self.conv5_1(x5))
+        x5 = F.relu(self.conv5_2(x5))
+
+        x6 = torch.cat([upsample2d(x5), x4], 1)
+        x6 = F.relu(self.conv6_1(x6))
+        x6 = F.relu(self.conv6_2(x6))
+
+        x7 = torch.cat([upsample2d(x6), x3], 1)
+        x7 = F.relu(self.conv7_1(x7))
+        x7 = F.relu(self.conv7_2(x7))
+
+        x8 = torch.cat([upsample2d(x7), x2], 1)
+        x8 = F.relu(self.conv8_1(x8))
+        x8 = F.relu(self.conv8_2(x8))
+
+        x9 = torch.cat([upsample2d(x8), x1], 1)
+        x9 = F.relu(self.conv9_1(x9))
+        x9 = F.relu(self.conv9_2(x9))
+
+        x10 = self.conv10(x9)
+        b = self.hps.patch_border
+        return F.sigmoid(x10[:, :, b:-b, b:-b])
