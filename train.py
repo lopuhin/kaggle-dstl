@@ -145,19 +145,20 @@ class SmallUNet(BaseNet):
         x1 = F.relu(self.conv3(x1))
         x1 = F.relu(self.conv4(x1))
         x1 = F.relu(self.conv5(x1))
-        x1 = self._upsample(x1)
+        x1 = upsample2d(x1)
         x = torch.cat([x, x1], 1)
         x = F.relu(self.conv6(x))
         x = self.conv7(x)
         b = self.hps.patch_border
         return F.sigmoid(x[:, :, b:-b, b:-b])
 
-    def _upsample(self, x):
-        # repeat is missing: https://github.com/pytorch/pytorch/issues/440
-        # x = x.repeat(1, 1, 2, 2)
-        x = torch.stack([x[:, :, i // 2, :] for i in range(x.size()[2] * 2)], 2)
-        x = torch.stack([x[:, :, :, i // 2] for i in range(x.size()[3] * 2)], 3)
-        return x
+
+def upsample2d(x):
+    # repeat is missing: https://github.com/pytorch/pytorch/issues/440
+    # return x.repeat(1, 1, 2, 2)
+    x = torch.stack([x[:, :, i // 2, :] for i in range(x.size()[2] * 2)], 2)
+    x = torch.stack([x[:, :, :, i // 2] for i in range(x.size()[3] * 2)], 3)
+    return x
 
 
 DefaultNet = OldNet
