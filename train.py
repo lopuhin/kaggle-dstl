@@ -206,7 +206,7 @@ class Model:
         loss = self.bce_loss(y_pred, y)
         if self.hps.jaccard_loss:
             intersection = (y_pred * y).sum()
-            union = y_pred.sum() + y.sum()
+            union = y_pred.sum() + y.sum() - intersection
             if union[0] != 0:
                 loss = loss / self.hps.jaccard_loss + (1 - intersection / union)
         return loss
