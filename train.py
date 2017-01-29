@@ -367,11 +367,11 @@ class Model:
                     for cls, ls in zip(self.hps.classes, losses):
                         self._log_value(
                             'loss/cls-{}'.format(cls), np.mean(ls[-log_step:]))
-                    pred_y = self.net(self._var(x)).data.cpu().numpy()
-                    self._update_jaccard(jaccard_stats, y.numpy(), pred_y)
+                    pred_y = self.net(self._var(x)).data.cpu()
+                    self._update_jaccard(jaccard_stats, y.numpy(), pred_y.numpy())
                     self._log_jaccard(jaccard_stats)
                     if i == im_log_step:
-                        self._log_im(x.numpy(), y.numpy(), pred_y)
+                        self._log_im(x.numpy(), y.numpy(), pred_y.numpy())
                 step_losses = self.train_step(x, y)
                 for ls, l in zip(losses, step_losses):
                     ls.append(l.data[0])
@@ -390,13 +390,18 @@ class Model:
                 for cls in self.hps.classes}
 
     def _update_jaccard(self, stats, mask, pred):
-        assert len(mask.shape) == len(pred.shape)
+        assert mask.shape == pred.shape
         assert len(mask.shape) in {3, 4}
         for cls, tp_fp_fn in stats.items():
             cls_idx = self.hps.classes.index(cls)
+            if len(mask.shape) == 3:
+                assert mask.shape[0] == self.hps.n_classes
+                p, y = pred[cls_idx], mask[cls_idx]
+            else:
+                assert mask.shape[1] == self.hps.n_classes
+                p, y = pred[:, cls_idx], mask[:, cls_idx]
             for threshold, (tp, fp, fn) in tp_fp_fn.items():
-                _tp, _fp, _fn = utils.mask_tp_fp_fn(
-                    pred[:, cls_idx], mask[:, cls_idx], threshold)
+                _tp, _fp, _fn = utils.mask_tp_fp_fn(p, y, threshold)
                 tp.append(_tp)
                 fp.append(_fp)
                 fn.append(_fn)
@@ -456,7 +461,6 @@ class Model:
             if subsample != 1:
                 random.shuffle(all_xy)
                 all_xy = all_xy[:len(all_xy) // subsample]
-            pred_mask = np.zeros([self.hps.n_classes, w, h], dtype=np.float32)
             for xy_batch in utils.chunks(all_xy, self.hps.batch_size):
                 inputs = np.array(
                     [im.data[:, x - b: x + s + b, y - b: y + s + b]
@@ -470,8 +474,6 @@ class Model:
                 for ls, l in zip(losses, step_losses):
                     ls.append(l.data[0])
                 y_pred_numpy = y_pred.data.cpu().numpy()
-                for (x, y), mask in zip(xy_batch, y_pred_numpy):
-                    pred_mask[:, x: x + s, y: y + s] = mask
                 self._update_jaccard(jaccard_stats, outputs, y_pred_numpy)
         losses = np.array(losses)
         logger.info('Valid loss: {:.3f}, Jaccard: {}'.format(
@@ -556,8 +558,8 @@ def main():
         train_ids = all_im_ids
     elif args.stratified:
         mask_stats = utils.load_mask_stats()
-        im_area = [(im_id, sum(mask_stats[im_id][str(cls)]['area']
-                               for cls in hps.classes))
+        im_area = [(im_id, np.mean([mask_stats[im_id][str(cls)]['area']
+                                    for cls in hps.classes]))
                    for im_id in all_im_ids]
         im_area.sort(key=lambda x: (x[1], x[0]), reverse=True)
         train_ids, valid_ids = [], []
