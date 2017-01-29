@@ -135,8 +135,6 @@ class SmallUNet(BaseNet):
         self.conv3 = nn.Conv2d(32, 64, 3, padding=1)
         self.conv4 = nn.Conv2d(64, 64, 3, padding=1)
         self.conv5 = nn.Conv2d(64, 32, 3, padding=1)
-        # self.deconv = nn.ConvTranspose2d(64, 64, 1, stride=2)
-        self.deconv = nn.ConvTranspose2d(1, 1, 1, stride=2)
         self.conv6 = nn.Conv2d(64, 32, 3, padding=1)
         self.conv7 = nn.Conv2d(32, hps.n_classes, 3, padding=1)
 
@@ -156,12 +154,10 @@ class SmallUNet(BaseNet):
 
     def _upsample(self, x):
         # repeat is missing: https://github.com/pytorch/pytorch/issues/440
-        # x1 = x1.repeat(1, 1, 2, 2)
-        # do deconv instead
-        b, l, w, h = x.size()
-        x = self.deconv(x.resize(b * l, w, h).unsqueeze(1),
-                        output_size=(b * l, 1, 2 * w, 2 * h))
-        return x.resize(b, l, 2 * w, 2 * h)
+        # x = x.repeat(1, 1, 2, 2)
+        x = torch.stack([x[:, :, i // 2, :] for i in range(x.size()[2] * 2)], 2)
+        x = torch.stack([x[:, :, :, i // 2] for i in range(x.size()[3] * 2)], 3)
+        return x
 
 
 DefaultNet = OldNet
