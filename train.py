@@ -358,7 +358,7 @@ class Model:
                 ))
 
         t0 = t00 = time.time()
-        log_step = 40
+        log_step = 100
         im_log_step = n_batches // log_step * log_step
         with ThreadPool(processes=4) as pool:
             map_ = map if no_mp else partial(pool.imap_unordered, chunksize=4)
