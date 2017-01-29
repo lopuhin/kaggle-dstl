@@ -208,9 +208,10 @@ class Model:
         self.net.global_step += 1
         return losses
 
-    def losses(self, y, y_pred):
+    def losses(self, ys, y_preds):
         losses = []
         for cls_idx in range(self.hps.n_classes):
+            y, y_pred = ys[:, cls_idx], y_preds[:, cls_idx]
             loss = self.bce_loss(y_pred, y)
             if self.hps.jaccard_loss:
                 intersection = (y_pred * y).sum()
@@ -281,8 +282,8 @@ class Model:
             im_size = im_data.shape[1:]
             poly_by_type = utils.load_polygons(im_id, im_size)
             mask = np.array(
-                [utils.mask_for_polygons(im_size, poly_by_type[poly_type + 1])
-                 for poly_type in range(self.hps.total_classes)],
+                [utils.mask_for_polygons(im_size, poly_by_type[cls + 1])
+                 for cls in range(self.hps.total_classes)],
                 dtype=np.uint8)
             with mask_path.open('wb') as f:
                 np.save(f, mask)
@@ -395,7 +396,7 @@ class Model:
             cls_idx = self.hps.classes.index(cls)
             for threshold, (tp, fp, fn) in tp_fp_fn.items():
                 _tp, _fp, _fn = utils.mask_tp_fp_fn(
-                    pred[cls_idx], mask[cls_idx], threshold)
+                    pred[:, cls_idx], mask[:, cls_idx], threshold)
                 tp.append(_tp)
                 fp.append(_fp)
                 fn.append(_fn)
