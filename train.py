@@ -132,7 +132,8 @@ class SmallUNet(BaseNet):
         self.conv3 = nn.Conv2d(64, 128, 3, padding=1)
         self.conv4 = nn.Conv2d(128, 128, 3, padding=1)
         self.conv5 = nn.Conv2d(128, 64, 3, padding=1)
-        self.deconv = nn.ConvTranspose2d(64, 64, 1, stride=2)
+        # self.deconv = nn.ConvTranspose2d(64, 64, 1, stride=2)
+        self.deconv = nn.ConvTranspose2d(1, 1, 1, stride=2)
         self.conv6 = nn.Conv2d(128, 64, 3, padding=1)
         self.conv7 = nn.Conv2d(64, 1, 3, padding=1)
 
@@ -143,15 +144,21 @@ class SmallUNet(BaseNet):
         x1 = F.relu(self.conv3(x1))
         x1 = F.relu(self.conv4(x1))
         x1 = F.relu(self.conv5(x1))
-        # repeat is missing: https://github.com/pytorch/pytorch/issues/440
-        # x1 = x1.repeat(1, 1, 2, 2)
-        # do deconv instead
-        x1 = self.deconv(x1, output_size=x.size())
+        x1 = self._upsample(x1)
         x = torch.cat([x, x1], 1)
         x = F.relu(self.conv6(x))
         x = self.conv7(x)
         b = self.hps.patch_border
         return F.sigmoid(x[:, 0, b:-b, b:-b])
+
+    def _upsample(self, x):
+        # repeat is missing: https://github.com/pytorch/pytorch/issues/440
+        # x1 = x1.repeat(1, 1, 2, 2)
+        # do deconv instead
+        b, l, w, h = x.size()
+        x = self.deconv(x.resize(b * l, w, h).unsqueeze(1),
+                        output_size=(b * l, 1, 2 * w, 2 * h))
+        return x.resize(b, l, 2 * w, 2 * h)
 
 
 DefaultNet = OldNet
