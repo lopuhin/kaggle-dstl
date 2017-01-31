@@ -176,19 +176,19 @@ class Model:
                         im, (x, y) = self.sample_im_xy(train_images)
                 patch = im.data[:, x - mb: x + s + mb, y - mb: y + s + mb]
                 mask = im.mask[:, x - m: x + s + m, y - m: y + s + m]
-                # mirror flips
-                if random.random() < 0.5:
-                    patch = np.flip(patch, 1)
-                    mask = np.flip(mask, 1)
-                if random.random() < 0.5:
-                    patch = np.flip(patch, 2)
-                    mask = np.flip(mask, 2)
-                angle = random.random() * 180
-                # rotations
-                patch = utils.rotated(patch, angle)
-                mask = utils.rotated(mask, angle)
-                inputs.append(patch[:, m: -m, m: -m])
-                outputs.append(mask[:, m: -m, m: -m])
+                if self.hps.augment_flips:
+                    if random.random() < 0.5:
+                        patch = np.flip(patch, 1)
+                        mask = np.flip(mask, 1)
+                    if random.random() < 0.5:
+                        patch = np.flip(patch, 2)
+                        mask = np.flip(mask, 2)
+                if self.hps.augment_rotations:
+                    angle = random.random() * 180
+                    patch = utils.rotated(patch, angle)
+                    mask = utils.rotated(mask, angle)
+                inputs.append(patch[:, m: -m, m: -m].astype(np.float32))
+                outputs.append(mask[:, m: -m, m: -m].astype(np.float32))
 
             return (torch.from_numpy(np.array(inputs)),
                     torch.from_numpy(np.array(outputs)))

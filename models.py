@@ -16,6 +16,9 @@ class HyperParams:
     patch_inner = attr.ib(default=64)
     patch_border = attr.ib(default=16)
 
+    augment_rotations = attr.ib(default=1)
+    augment_flips = attr.ib(default=1)
+
     dropout_keep_prob = attr.ib(default=0.0)  # TODO
     jaccard_loss = attr.ib(default=0)
 
