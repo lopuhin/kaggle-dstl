@@ -19,6 +19,8 @@ class HyperParams:
     augment_rotations = attr.ib(default=1)
     augment_flips = attr.ib(default=1)
 
+    validation_square = attr.ib(default=400)
+
     dropout_keep_prob = attr.ib(default=0.0)  # TODO
     jaccard_loss = attr.ib(default=0)
 

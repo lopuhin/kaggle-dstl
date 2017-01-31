@@ -85,23 +85,35 @@ class Model:
         return losses
 
     def train(self, logdir: Path, train_ids: List[str], valid_ids: List[str],
-              no_mp: bool=False):
+              validation: str, no_mp: bool=False):
         self.tb_logger = tensorboard_logger.Logger(str(logdir))
         self.logdir = logdir
         train_images = [self.load_image(im_id) for im_id in sorted(train_ids)]
         valid_images = None
         n_epoch = self.restore_snapshot(logdir)
+        square_validation = validation == 'square'
         for n_epoch in range(n_epoch, self.hps.n_epochs):
             logger.info('Epoch {}, training'.format(n_epoch + 1))
             subsample = 4  # make validation more often
             for _ in range(subsample):
-                self.train_on_images(train_images, subsample=subsample,
-                                     no_mp=no_mp)
+                self.train_on_images(
+                    train_images,
+                    subsample=subsample,
+                    square_validation=square_validation,
+                    no_mp=no_mp)
                 if valid_images is None:
-                    valid_images = [self.load_image(im_id)
-                                    for im_id in sorted(valid_ids)]
+                    if square_validation:
+                        s = self.hps.validation_square
+                        valid_images = [
+                            Image(None, im.data[:, :s, :s], im.mask[:, :s, :s])
+                            for im in train_images]
+                    else:
+                        valid_images = [self.load_image(im_id)
+                                        for im_id in sorted(valid_ids)]
                 if valid_images:
-                    self.validate_on_images(valid_images, subsample=subsample)
+                    self.validate_on_images(
+                        valid_images,
+                        subsample=1 if square_validation else subsample)
             self.save_snapshot(n_epoch)
         self.tb_logger = None
         self.logdir = None
@@ -153,7 +165,9 @@ class Model:
             im_data = im_data[:self.hps.n_channels]
         return Image(im_id, im_data, mask[self.hps.classes])
 
-    def train_on_images(self, train_images: List[Image], subsample: int=1,
+    def train_on_images(self, train_images: List[Image],
+                        subsample: int=1,
+                        square_validation: bool=False,
                         no_mp: bool=False):
         self.net.train()
         b = self.hps.patch_border
@@ -168,12 +182,13 @@ class Model:
         def gen_batch(_):
             inputs, outputs = [], []
             for _ in range(self.hps.batch_size):
-                im, (x, y) = self.sample_im_xy(train_images)
+                im, (x, y) = self.sample_im_xy(train_images, square_validation)
                 if random.random() < self.hps.oversample:
                     for _ in range(1000):
                         if im.mask[x: x + s, y: y + s].sum():
                             break
-                        im, (x, y) = self.sample_im_xy(train_images)
+                        im, (x, y) = self.sample_im_xy(
+                            train_images, square_validation)
                 patch = im.data[:, x - mb: x + s + mb, y - mb: y + s + mb]
                 mask = im.mask[:, x - m: x + s + m, y - m: y + s + m]
                 if self.hps.augment_flips:
@@ -195,7 +210,7 @@ class Model:
 
         self._train_on_feeds(gen_batch, n_batches, no_mp=no_mp)
 
-    def sample_im_xy(self, train_images):
+    def sample_im_xy(self, train_images, square_validation=False):
         b = self.hps.patch_border
         s = self.hps.patch_inner
         # Extra margin for rotation
@@ -203,8 +218,11 @@ class Model:
         mb = m + b  # full margin
         im = random.choice(train_images)
         w, h = im.size
-        return im, (random.randint(mb, w - (mb + s)),
-                    random.randint(mb, h - (mb + s)))
+        min_xy = mb
+        if square_validation:
+            min_xy += self.hps.validation_square
+        return im, (random.randint(min_xy, w - (mb + s)),
+                    random.randint(min_xy, h - (mb + s)))
 
     def _train_on_feeds(self, gen_batch, n_batches: int, no_mp: bool):
         losses = [[] for _ in range(self.hps.n_classes)]
@@ -391,7 +409,8 @@ def main():
     arg('--hps', type=str, help='Change hyperparameters in k1=v1,k2=v2 format')
     arg('--all', action='store_true',
         help='Train on all images without validation')
-    arg('--stratified', type=int, default=1, help='stratified train/valid split')
+    arg('--validation', choices=['random', 'stratified', 'square'],
+        default='stratified', help='validation strategy')
     arg('--only', type=str,
         help='Train on this image ids only (comma-separated) without validation')
     arg('--clean', action='store_true', help='Clean logdir')
@@ -418,7 +437,7 @@ def main():
         train_ids = args.only.split(',')
     elif args.all:
         train_ids = all_im_ids
-    elif args.stratified:
+    elif args.validation == 'stratified':
         mask_stats = utils.load_mask_stats()
         im_area = [(im_id, np.mean([mask_stats[im_id][str(cls)]['area']
                                     for cls in hps.classes]))
@@ -438,7 +457,9 @@ def main():
                 assert False
             if a in train_ids and b in train_ids:
                 assert False
-    else:
+    elif args.validation == 'square':
+        train_ids = valid_ids = all_im_ids
+    elif args.validation == 'random':
         # Fix for images of the same place in different seasons
         labels = []
         for im_id in all_im_ids:
@@ -449,8 +470,14 @@ def main():
             GroupShuffleSplit(random_state=1).split(all_im_ids, groups=labels))]
         logger.info('Train: {}'.format(' '.join(sorted(train_ids))))
         logger.info('Valid: {}'.format(' '.join(sorted(valid_ids))))
-    model.train(logdir=logdir, train_ids=train_ids, valid_ids=valid_ids,
-                no_mp=args.no_mp)
+    else:
+        raise ValueError('Unexpected validation kind: {}'.format(args.validation))
+    model.train(logdir=logdir,
+                train_ids=train_ids,
+                valid_ids=valid_ids,
+                validation=args.validation,
+                no_mp=args.no_mp,
+                )
 
 
 if __name__ == '__main__':
