@@ -5,6 +5,7 @@ import json
 from functools import partial
 from pathlib import Path
 import multiprocessing
+from multiprocessing.pool import ThreadPool
 
 import numpy as np
 import shapely.affinity
@@ -21,16 +22,18 @@ logger = utils.get_logger(__name__)
 def main():
     parser = argparse.ArgumentParser()
     arg = parser.add_argument
-    arg('logdir', type=str, help='Path to log directory')
+    arg('logdir', type=Path, help='Path to log directory')
     arg('output', type=str, help='Submission csv')
     arg('--train-only', action='store_true', help='Predict only train images')
     arg('--only', help='Only predict these image ids (comma-separated)')
     arg('--threshold', type=float, default=0.5)
     arg('--epsilon', type=float, default=5.0, help='smoothing')
     arg('--masks-only', action='store_true', help='Do only mask prediction')
+    arg('--model-path', type=Path,
+        help='Path to a specific model (if the last is not desired)')
     args = parser.parse_args()
     hps = HyperParams(**json.loads(
-        Path(args.logdir).joinpath('hps.json').read_text()))
+        args.logdir.joinpath('hps.json').read_text()))
 
     only = set(args.only.split(',')) if args.only else set()
     with open('sample_submission.csv') as f:
@@ -43,22 +46,35 @@ def main():
     store.mkdir(exist_ok=True)
 
     model = Model(hps=hps)
-    model.restore_snapshot(args.logdir)
+    if args.model_path:
+        model.restore_snapshot(args.model_path)
+    else:
+        model.restore_last_snapshot(args.logdir)
     logger.info('Predicting masks')
     train_ids = set(utils.get_wkt_data())
     to_predict = train_ids if args.train_only else set(only or image_ids)
-    for im_id in sorted(to_predict):
-        im_path = store.joinpath('{}.mask'.format(im_id))
-        if im_path.exists():
-            logger.info('Skip {}: already exists'.format(im_id))
-            continue
-        logger.info(im_id)
-        im = Image(id=im_id,
-                   data=model.preprocess_image(utils.load_image(im_id)))
+
+    def im_to_predict():
+        for im_id in sorted(to_predict):
+            im_path = store.joinpath('{}.mask'.format(im_id))
+            if im_path.exists():
+                logger.info('Skip {}: already exists'.format(im_id))
+                continue
+            im = Image(id=im_id,
+                       data=model.preprocess_image(utils.load_image(im_id)))
+            yield im_path, im
+
+    def predict(arg):
+        im_path, im = arg
+        logger.info(im.id)
         mask = model.predict_image_mask(im).astype(np.float16)
-        assert mask.shape == im.data.shape[:2]
-        with im_path.open('wb') as f:
-            np.save(f, mask)
+        assert mask.shape[1:] == im.data.shape[1:]
+        return im_path, mask
+
+    with ThreadPool(processes=1) as pool:
+        for im_path, mask in pool.imap(predict, im_to_predict(), chunksize=2):
+            with im_path.open('wb') as f:
+                np.save(f, mask)
 
     if args.masks_only:
         logger.info('Was building masks only, done.')

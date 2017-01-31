@@ -90,7 +90,7 @@ class Model:
         self.logdir = logdir
         train_images = [self.load_image(im_id) for im_id in sorted(train_ids)]
         valid_images = None
-        n_epoch = self.restore_snapshot(logdir)
+        n_epoch = self.restore_last_snapshot(logdir)
         square_validation = validation == 'square'
         for n_epoch in range(n_epoch, self.hps.n_epochs):
             logger.info('Epoch {}, training'.format(n_epoch + 1))
@@ -362,23 +362,26 @@ class Model:
             self._log_value('valid-loss/cls-{}'.format(cls), cls_losses.mean())
         self._log_jaccard(jaccard_stats, prefix='valid-')
 
-    def restore_snapshot(self, logdir: Path) -> int:
+    def restore_last_snapshot(self, logdir: Path) -> int:
         for n_epoch in reversed(range(self.hps.n_epochs)):
             model_path = self._model_path(logdir, n_epoch)
-            if Path(model_path).exists():
+            if model_path.exists():
                 logger.info('Loading snapshot {}'.format(model_path))
-                state = torch.load(model_path)
-                self.net.load_state_dict(state)
+                self.restore_snapshot(model_path)
                 return n_epoch + 1
         return 0
+
+    def restore_snapshot(self, model_path: Path):
+        state = torch.load(str(model_path))
+        self.net.load_state_dict(state)
 
     def save_snapshot(self, n_epoch: int):
         model_path = self._model_path(self.logdir, n_epoch)
         logger.info('Saving snapshot {}'.format(model_path))
-        torch.save(self.net.state_dict(), model_path)
+        torch.save(self.net.state_dict(), str(model_path))
 
-    def _model_path(self, logdir: Path, n_epoch: int) -> str:
-        return str(logdir.joinpath('model-{}'.format(n_epoch)))
+    def _model_path(self, logdir: Path, n_epoch: int) -> Path:
+        return logdir.joinpath('model-{}'.format(n_epoch))
 
     def predict_image_mask(self, im: Image) -> np.ndarray:
         self.net.eval()
@@ -390,7 +393,6 @@ class Model:
         ys = range(b, h - (b + s), s)
         all_xy = [(x, y) for x in xs for y in ys]
         pred_mask = np.zeros([self.hps.n_classes, w, h], dtype=np.float32)
-        self.net.eval()
         for xy_batch in tqdm.tqdm(
                 list(utils.chunks(all_xy, self.hps.batch_size))):
             inputs = np.array(
