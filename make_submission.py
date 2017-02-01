@@ -4,12 +4,14 @@ import csv
 import json
 from functools import partial
 from pathlib import Path
-import multiprocessing
-from multiprocessing.pool import ThreadPool
+from multiprocessing.pool import Pool, ThreadPool
+import traceback
+from typing import List
 
 import numpy as np
 import shapely.affinity
 from shapely.geometry import MultiPolygon
+from shapely.geos import TopologicalError
 import shapely.wkt
 
 import utils
@@ -85,41 +87,73 @@ def main():
         writer = csv.writer(f)
         writer.writerow(header)
         to_output = train_ids if args.train_only else (only or image_ids)
-        with multiprocessing.Pool(processes=4) as pool:
-            for row in pool.imap(
+        jaccard_stats = [[] for _ in hps.classes]
+        sizes = [0 for _ in hps.classes]
+        with Pool(processes=8) as pool:
+            # The order will be wrong, but we don't care,
+            # it's fixed in merge_submission.
+            for rows, js in pool.imap_unordered(
                     partial(get_poly_data,
                             store=store,
                             threshold=args.threshold,
-                            cls=hps.cls,
+                            classes=hps.classes,
                             epsilon=args.epsilon,
                             ),
                     to_output):
-                writer.writerow(row)
+                assert len(rows) == hps.n_classes
+                writer.writerows(rows)
+                for cls_jss, cls_js in zip(jaccard_stats, js):
+                    cls_jss.append(cls_js)
+                for idx, (_, _, poly) in enumerate(rows):
+                    sizes[idx] += len(poly)
+        if args.train_only:
+            for cls, cls_js in zip(hps.classes, jaccard_stats):
+                intersection = union = tp = fp = fn = 0
+                for (_tp, _fp, _fn), (_intersection, _union) in cls_js:
+                    intersection += _intersection
+                    union += _union
+                    tp += _tp
+                    fp += _fp
+                    fn += _fn
+                logger.info(
+                    'cls-{} polygon jaccard: {:.5f}, mask jaccard: {:.5f}'
+                    .format(cls,
+                            intersection / union,
+                            tp / (tp + fp + fn)))
+        for cls, size in zip(hps.classes, sizes):
+            logger.info('cls-{} size: {:,} bytes'.format(cls, size))
 
 
-def get_poly_data(im_id, *, store, cls: int,
+def get_poly_data(im_id, *, store, classes: List[int],
                   threshold: float, epsilon: float):
-    poly_type = cls + 1
     mask_path = store.joinpath('{}.mask'.format(im_id))
     train_polygons = utils.get_wkt_data().get(im_id)
+    jaccard_stats = []
     if mask_path.exists():
         logger.info(im_id)
-        mask = np.load(str(mask_path))
-        mask = mask > threshold  # type: np.ndarray
-        pred_poly = get_polygons(im_id, mask, epsilon, cls)
-        if train_polygons:
-            train_poly = train_polygons[poly_type]
-            log_jaccard(im_id, pred_poly, train_poly, mask, threshold)
-            return im_id, str(poly_type), train_polygons[poly_type]
-        else:
-            return im_id, str(poly_type), shapely.wkt.dumps(pred_poly)
+        masks = np.load(str(mask_path))
+        masks = masks > threshold  # type: np.ndarray
+        rows = []
+        for cls, mask in zip(classes, masks):
+            poly_type = cls + 1
+            pred_poly = get_polygons(im_id, mask, epsilon, cls)
+            if train_polygons:
+                train_poly = train_polygons[poly_type]
+                jaccard_stats.append(
+                    log_jaccard(im_id, pred_poly, train_poly, mask, threshold))
+                rows.append((im_id, str(poly_type), train_polygons[poly_type]))
+            else:
+                rows.append(
+                    (im_id, str(poly_type), shapely.wkt.dumps(pred_poly)))
     else:
         logger.info('{} empty'.format(im_id))
-        return im_id, str(poly_type), 'MULTIPOLYGON EMPTY'
+        rows = [(im_id, str(cls + 1), 'MULTIPOLYGON EMPTY') for cls in classes]
+    return rows, jaccard_stats
 
 
 def get_polygons(im_id: str, mask: np.ndarray, epsilon: float, cls: int)\
         -> MultiPolygon:
+    assert len(mask.shape) == 2
     x_scaler, y_scaler = utils.get_scalers(im_id, im_size=mask.shape)
     x_scaler = 1 / x_scaler
     y_scaler = 1 / y_scaler
@@ -129,18 +163,23 @@ def get_polygons(im_id: str, mask: np.ndarray, epsilon: float, cls: int)\
 
 
 def log_jaccard(im_id, pred_poly, train_poly, mask, threshold):
-    im_size = mask.shape[:2]
+    im_size = mask.shape
     train_poly = shapely.wkt.loads(train_poly)
     scaled_train_poly = utils.scale_to_mask(im_id, im_size, train_poly)
     true_mask = utils.mask_for_polygons(im_size, scaled_train_poly)
-    tp, fp, fn = utils.mask_tp_fp_fn(mask, true_mask, threshold)
+    assert len(mask.shape) == 2
+    tp, fp, fn = tp_fp_fn = utils.mask_tp_fp_fn(mask, true_mask, threshold)
+    try:
+        intersection = pred_poly.intersection(train_poly).area
+        union = pred_poly.union(train_poly).area
+    except TopologicalError: # FIXME - wtf???
+        traceback.print_exc()
+        intersection = union = 0
     eps = 1e-15
-    logger.info(
-        'polygon jaccard: {:.5f}, mask jaccard: {:.5f}'
-        .format(pred_poly.intersection(train_poly).area /
-                (pred_poly.union(train_poly).area + eps),
-                tp / (tp + fp + fn + eps),
-                ))
+    logger.info('polygon jaccard: {:.5f}, mask jaccard: {:.5f}'
+                .format(intersection / (union + eps),
+                        tp / (tp + fp + fn + eps)))
+    return tp_fp_fn, (intersection, union)
 
 
 if __name__ == '__main__':

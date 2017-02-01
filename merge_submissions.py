@@ -10,6 +10,7 @@ import utils  # for field_size_limit
 def main():
     parser = argparse.ArgumentParser()
     arg = parser.add_argument
+    # TODO - output and csv set separately
     arg('root')
     args = parser.parse_args()
     root = Path(args.root)
