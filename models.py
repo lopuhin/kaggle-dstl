@@ -22,7 +22,7 @@ class HyperParams:
     validation_square = attr.ib(default=400)
 
     dropout_keep_prob = attr.ib(default=0.0)  # TODO
-    jaccard_loss = attr.ib(default=0)
+    dice_loss = attr.ib(default=0)
 
     n_epochs = attr.ib(default=30)
     oversample = attr.ib(default=0.0)

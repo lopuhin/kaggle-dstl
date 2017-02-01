@@ -75,12 +75,11 @@ class Model:
         for cls_idx in range(self.hps.n_classes):
             y, y_pred = ys[:, cls_idx], y_preds[:, cls_idx]
             loss = self.bce_loss(y_pred, y)
-            if self.hps.jaccard_loss:
+            if self.hps.dice_loss:
                 intersection = (y_pred * y).sum()
-                union = y_pred.sum() + y.sum() - intersection
-                if union[0] != 0:
-                    loss = (loss / self.hps.jaccard_loss +
-                            (1 - intersection / union))
+                uwi = y_pred.sum() + y.sum()  # without intersection union
+                if uwi[0] != 0:
+                    loss = (loss / self.hps.dice_loss + (1 - intersection / uwi))
             losses.append(loss)
         return losses
 
