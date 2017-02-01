@@ -66,17 +66,25 @@ def main():
                        data=model.preprocess_image(utils.load_image(im_id)))
             yield im_path, im
 
-    def predict(arg):
-        im_path, im = arg
+    def predict(im):
         logger.info(im.id)
         mask = model.predict_image_mask(im).astype(np.float16)
         assert mask.shape[1:] == im.data.shape[1:]
-        return im_path, mask
+        return mask
 
-    with ThreadPool(processes=1) as pool:
-        for im_path, mask in pool.imap(predict, im_to_predict(), chunksize=2):
-            with im_path.open('wb') as f:
-                np.save(f, mask)
+    def masks():
+        with ThreadPool(processes=1) as pool:
+            future = im_path = None
+            for im_path, im in im_to_predict():
+                if future is not None:
+                    yield im_path, future.get()
+                future = pool.apply_async(predict, (im,))
+            if future is not None:
+                yield im_path, future.get()
+
+    for im_path, mask in masks():
+        with im_path.open('wb') as f:
+            np.save(f, mask)
 
     if args.masks_only:
         logger.info('Was building masks only, done.')
