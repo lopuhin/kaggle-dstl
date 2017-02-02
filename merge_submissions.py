@@ -10,13 +10,11 @@ import utils  # for field_size_limit
 def main():
     parser = argparse.ArgumentParser()
     arg = parser.add_argument
-    # TODO - output and csv set separately
-    arg('root')
+    arg('output')
+    arg('inputs', nargs='+')
     args = parser.parse_args()
-    root = Path(args.root)
-    out_path = root.joinpath('submission.csv.gz')
     all_data = {}
-    for path in root.glob('*.csv'):
+    for path in map(Path, args.inputs):
         print('Reading {}'.format(path))
         with path.open() as f:
             reader = csv.reader(f)
@@ -24,7 +22,7 @@ def main():
             all_data.update(
                 ((im_id, poly_type), poly) for im_id, poly_type, poly in reader)
 
-    with gzip.open(str(out_path), 'wt') as outf:
+    with gzip.open(str(args.output), 'wt') as outf:
         writer = csv.writer(outf)
         with open('sample_submission.csv') as f:
             reader = csv.reader(f)
