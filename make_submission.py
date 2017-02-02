@@ -48,34 +48,15 @@ def main():
     store = Path(args.output.split('.csv')[0])
     store.mkdir(exist_ok=True)
 
-    model = Model(hps=hps)
-    if args.model_path:
-        model.restore_snapshot(args.model_path)
-    else:
-        model.restore_last_snapshot(args.logdir)
-    logger.info('Predicting masks')
     train_ids = set(utils.get_wkt_data())
-    to_predict = train_ids if args.train_only else set(only or image_ids)
+    to_predict = set(train_ids)
+    if not args.train_only:
+        to_predict |= set(only or image_ids)
     im_path = lambda im_id: store.joinpath('{}.mask'.format(im_id))
     to_predict = [im_id for im_id in to_predict if not im_path(im_id).exists()]
 
-    def load_im(im_id):
-        return Image(id=im_id,
-                     data=model.preprocess_image(utils.load_image(im_id)))
-
-    def predict_mask(im):
-        logger.info(im.id)
-        return im, model.predict_image_mask(im)
-
-    im_masks = map(predict_mask, utils.imap_fixed_output_buffer(
-        load_im, sorted(to_predict), threads=2))
-
-    for im, mask in utils.imap_fixed_output_buffer(
-            lambda _: next(im_masks), to_predict, threads=1):
-        assert mask.shape[1:] == im.data.shape[1:]
-        with im_path(im.id).open('wb') as f:
-            np.save(f, mask.astype(np.float16))
-
+    if to_predict:
+        predict_masks(args, hps, im_path, to_predict)
     if args.masks_only:
         logger.info('Was building masks only, done.')
         return
@@ -87,7 +68,7 @@ def main():
         to_output = train_ids if args.train_only else (only or image_ids)
         jaccard_stats = [[] for _ in hps.classes]
         sizes = [0 for _ in hps.classes]
-        with Pool(processes=8) as pool:
+        with Pool(processes=16) as pool:
             # The order will be wrong, but we don't care,
             # it's fixed in merge_submission.
             for rows, js in pool.imap_unordered(
@@ -120,6 +101,32 @@ def main():
                             tp / (tp + fp + fn)))
         for cls, size in zip(hps.classes, sizes):
             logger.info('cls-{} size: {:,} bytes'.format(cls, size))
+
+
+def predict_masks(args, hps, im_path, to_predict: List[str]):
+    model = Model(hps=hps)
+    if args.model_path:
+        model.restore_snapshot(args.model_path)
+    else:
+        model.restore_last_snapshot(args.logdir)
+    logger.info('Predicting masks')
+
+    def load_im(im_id):
+        return Image(id=im_id,
+                     data=model.preprocess_image(utils.load_image(im_id)))
+
+    def predict_mask(im):
+        logger.info(im.id)
+        return im, model.predict_image_mask(im)
+
+    im_masks = map(predict_mask, utils.imap_fixed_output_buffer(
+        load_im, sorted(to_predict), threads=2))
+
+    for im, mask in utils.imap_fixed_output_buffer(
+            lambda _: next(im_masks), to_predict, threads=1):
+        assert mask.shape[1:] == im.data.shape[1:]
+        with im_path(im.id).open('wb') as f:
+            np.save(f, mask.astype(np.float16))
 
 
 def get_poly_data(im_id, *, store, classes: List[int],

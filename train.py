@@ -239,7 +239,8 @@ class Model:
         t0 = t00 = time.time()
         log_step = 100
         im_log_step = n_batches // log_step * log_step
-        map_ = map if no_mp else partial(utils.imap_fixed_output_buffer, processes=4)
+        map_ = (map if no_mp else
+                partial(utils.imap_fixed_output_buffer, threads=4))
         for i, (x, y) in enumerate(map_(gen_batch, range(n_batches))):
             if losses[0] and i % log_step == 0:
                 for cls, ls in zip(self.hps.classes, losses):
