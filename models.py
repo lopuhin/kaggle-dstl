@@ -22,6 +22,7 @@ class HyperParams:
     validation_square = attr.ib(default=400)
 
     dropout_keep_prob = attr.ib(default=0.0)  # TODO
+    batchnorm = attr.ib(default=0)
     dice_loss = attr.ib(default=0)
 
     filters_base = attr.ib(default=32)
@@ -53,6 +54,10 @@ class BaseNet(nn.Module):
         super().__init__()
         self.hps = hps
         self.register_buffer('global_step', torch.IntTensor(1).zero_())
+
+
+def conv3x3(in_, out):
+    return nn.Conv2d(in_, out, 3, padding=1)
 
 
 class MiniNet(BaseNet):
@@ -145,44 +150,44 @@ class SmallUNet(BaseNet):
         return F.sigmoid(x[:, :, b:-b, b:-b])
 
 
+class UNetModule(nn.Module):
+    def __init__(self, in_, out):
+        super().__init__()
+        self.conv1 = conv3x3(in_, out)
+        self.conv2 = conv3x3(out, out)
+
+    def forward(self, x):
+        x = F.relu(self.conv1(x))
+        x = F.relu(self.conv2(x))
+        return x
+
+
 class UNet(BaseNet):
     def __init__(self, hps):
         super().__init__(hps)
         self.pool = nn.MaxPool2d(2, 2)
         b = hps.filters_base
         self.filters = [b, b * 2, b * 4, b * 8, b * 16]
-        self.conv_down, self.conv_up = [], []
+        self.down, self.up = [], []
         for i, nf in enumerate(self.filters):
             low_nf = hps.n_channels if i == 0 else self.filters[i - 1]
-            self.conv_down.append([self.conv3(low_nf, nf),
-                                   self.conv3(nf, nf)])
-            for j, conv in enumerate(self.conv_down[-1], 1):
-                setattr(self, 'conv_down_{}_{}'.format(i, j), conv)
+            self.down.append(UNetModule(low_nf, nf))
+            setattr(self, 'down_{}'.format(i), self.down[-1])
             if i != 0:
-                self.conv_up.append([self.conv3(low_nf + nf, low_nf),
-                                     self.conv3(low_nf, low_nf)])
-                for j, conv in enumerate(self.conv_up[-1], 1):
-                    setattr(self, 'conv_up_{}_{}'.format(i, j), conv)
+                self.up.append(UNetModule(low_nf + nf, low_nf))
+                setattr(self, 'conv_up_{}'.format(i), self.up[-1])
         self.conv_final = nn.Conv2d(self.filters[0], hps.n_classes, 1)
-
-    @staticmethod
-    def conv3(in_, out):
-        return nn.Conv2d(in_, out, 3, padding=1)
 
     def forward(self, x):
         xs = []
         n = len(self.filters)
-        for i, convs in enumerate(self.conv_down):
-            x_out = self.pool(xs[-1]) if xs else x
-            for conv in convs:
-                x_out = F.relu(conv(x_out))
+        for i, down in enumerate(self.down):
+            x_out = down(self.pool(xs[-1]) if xs else x)
             xs.append(x_out)
 
         x_out = xs[-1]
-        for x_skip, convs in reversed(list(zip(xs[:-1], self.conv_up))):
-            x_out = torch.cat([upsample2d(x_out), x_skip], 1)
-            for conv in convs:
-                x_out = F.relu(conv(x_out))
+        for x_skip, up in reversed(list(zip(xs[:-1], self.up))):
+            x_out = up(torch.cat([upsample2d(x_out), x_skip], 1))
 
         x_out = self.conv_final(x_out)
         b = self.hps.patch_border
