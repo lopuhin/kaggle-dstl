@@ -103,12 +103,13 @@ def main():
 
 
 def predict_masks(args, hps, im_path, to_predict: List[str]):
+    logger.info('Predicting {} masks: {}'
+                .format(len(to_predict), ', '.join(sorted(to_predict))))
     model = Model(hps=hps)
     if args.model_path:
         model.restore_snapshot(args.model_path)
     else:
         model.restore_last_snapshot(args.logdir)
-    logger.info('Predicting masks')
 
     def load_im(im_id):
         return Image(id=im_id,
