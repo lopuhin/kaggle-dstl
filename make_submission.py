@@ -5,6 +5,7 @@ import json
 from functools import partial
 from pathlib import Path
 from multiprocessing.pool import Pool
+from concurrent.futures import ThreadPoolExecutor
 import traceback
 from typing import List
 
@@ -56,20 +57,24 @@ def main():
     train_ids = set(utils.get_wkt_data())
     to_predict = train_ids if args.train_only else set(only or image_ids)
     im_path = lambda im_id: store.joinpath('{}.mask'.format(im_id))
-    to_predict = sorted(im_id for im_id in to_predict
-                        if not im_path(im_id).exists())
+    to_predict = [im_id for im_id in to_predict if not im_path(im_id).exists()]
 
     def load_im(im_id):
         return Image(id=im_id,
                      data=model.preprocess_image(utils.load_image(im_id)))
 
-    for im in utils.imap_fixed_output_buffer(load_im, to_predict, threads=2):
+    def predict_mask(im):
         logger.info(im.id)
-        mask = model.predict_image_mask(im).astype(np.float16)
-        # TODO - do type conversion and saving in another thread
+        return im, model.predict_image_mask(im)
+
+    im_masks = map(predict_mask, utils.imap_fixed_output_buffer(
+        load_im, sorted(to_predict), threads=2))
+
+    for im, mask in utils.imap_fixed_output_buffer(
+            lambda _: next(im_masks), to_predict, threads=1):
         assert mask.shape[1:] == im.data.shape[1:]
         with im_path(im.id).open('wb') as f:
-            np.save(f, mask)
+            np.save(f, mask.astype(np.float16))
 
     if args.masks_only:
         logger.info('Was building masks only, done.')

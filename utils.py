@@ -1,9 +1,9 @@
 import csv
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from itertools import islice
 import logging
 import json
-from multiprocessing.pool import ThreadPool
 from typing import Dict, Tuple
 import sys
 
@@ -242,13 +242,13 @@ logger = get_logger(__name__)
 
 
 def imap_fixed_output_buffer(fn, it, threads: int):
-    with ThreadPool(processes=threads) as pool:
+    with ThreadPoolExecutor(max_workers=threads) as executor:
         futures = []
         max_futures = threads + 1
         for x in it:
             while len(futures) >= max_futures:
                 future, futures = futures[0], futures[1:]
-                yield future.get()
-            futures.append(pool.apply_async(fn, (x,)))
+                yield future.result()
+            futures.append(executor.submit(fn, x))
         for future in futures:
-            yield future.get()
+            yield future.result()
