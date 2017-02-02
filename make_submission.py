@@ -34,6 +34,7 @@ def main():
     arg('--masks-only', action='store_true', help='Do only mask prediction')
     arg('--model-path', type=Path,
         help='Path to a specific model (if the last is not desired)')
+    arg('--processes', type=int, default=4)
     args = parser.parse_args()
     hps = HyperParams(**json.loads(
         args.logdir.joinpath('hps.json').read_text()))
@@ -68,7 +69,7 @@ def main():
         to_output = train_ids if args.train_only else (only or image_ids)
         jaccard_stats = [[] for _ in hps.classes]
         sizes = [0 for _ in hps.classes]
-        with Pool(processes=16) as pool:
+        with Pool(processes=args.processes) as pool:
             # The order will be wrong, but we don't care,
             # it's fixed in merge_submission.
             for rows, js in pool.imap_unordered(

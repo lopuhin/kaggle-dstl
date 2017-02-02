@@ -149,35 +149,40 @@ class UNet(BaseNet):
     def __init__(self, hps):
         super().__init__(hps)
         self.pool = nn.MaxPool2d(2, 2)
-        conv3 = lambda in_, out: nn.Conv2d(in_, out, 3, padding=1)
-        sattr = lambda k, v: setattr(self, k, v)
         b = hps.filters_base
         self.filters = [b, b * 2, b * 4, b * 8, b * 16]
+        self.conv_down, self.conv_up = [], []
         for i, nf in enumerate(self.filters):
             low_nf = hps.n_channels if i == 0 else self.filters[i - 1]
-            # TODO - maybe make it a module?
-            sattr('conv_down_{}_1'.format(i), conv3(low_nf, nf))
-            sattr('conv_down_{}_2'.format(i), conv3(nf, nf))
+            self.conv_down.append([self.conv3(low_nf, nf),
+                                   self.conv3(nf, nf)])
+            for j, conv in enumerate(self.conv_down[-1], 1):
+                setattr(self, 'conv_down_{}_{}'.format(i, j), conv)
             if i != 0:
-                sattr('conv_up_{}_1'.format(i), conv3(low_nf + nf, low_nf))
-                sattr('conv_up_{}_2'.format(i), conv3(low_nf, low_nf))
+                self.conv_up.append([self.conv3(low_nf + nf, low_nf),
+                                     self.conv3(low_nf, low_nf)])
+                for j, conv in enumerate(self.conv_up[-1], 1):
+                    setattr(self, 'conv_up_{}_{}'.format(i, j), conv)
         self.conv_final = nn.Conv2d(self.filters[0], hps.n_classes, 1)
+
+    @staticmethod
+    def conv3(in_, out):
+        return nn.Conv2d(in_, out, 3, padding=1)
 
     def forward(self, x):
         xs = []
         n = len(self.filters)
-        for i in range(n):
+        for i, convs in enumerate(self.conv_down):
             x_out = self.pool(xs[-1]) if xs else x
-            x_out = F.relu(getattr(self, 'conv_down_{}_1'.format(i))(x_out))
-            x_out = F.relu(getattr(self, 'conv_down_{}_2'.format(i))(x_out))
+            for conv in convs:
+                x_out = F.relu(conv(x_out))
             xs.append(x_out)
 
         x_out = xs[-1]
-        for i in range(n - 1, 0, -1):
-            x_skip = xs[i - 1]
+        for x_skip, convs in reversed(list(zip(xs[:-1], self.conv_up))):
             x_out = torch.cat([upsample2d(x_out), x_skip], 1)
-            x_out = F.relu(getattr(self, 'conv_up_{}_1'.format(i))(x_out))
-            x_out = F.relu(getattr(self, 'conv_up_{}_2'.format(i))(x_out))
+            for conv in convs:
+                x_out = F.relu(conv(x_out))
 
         x_out = self.conv_final(x_out)
         b = self.hps.patch_border
