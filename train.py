@@ -239,29 +239,28 @@ class Model:
         t0 = t00 = time.time()
         log_step = 100
         im_log_step = n_batches // log_step * log_step
-        with ThreadPool(processes=4) as pool:
-            map_ = map if no_mp else partial(pool.imap_unordered, chunksize=4)
-            for i, (x, y) in enumerate(map_(gen_batch, range(n_batches))):
-                if losses[0] and i % log_step == 0:
-                    for cls, ls in zip(self.hps.classes, losses):
-                        self._log_value(
-                            'loss/cls-{}'.format(cls), np.mean(ls[-log_step:]))
-                    pred_y = self.net(self._var(x)).data.cpu()
-                    self._update_jaccard(jaccard_stats, y.numpy(), pred_y.numpy())
-                    self._log_jaccard(jaccard_stats)
-                    if i == im_log_step:
-                        self._log_im(x.numpy(), y.numpy(), pred_y.numpy())
-                step_losses = self.train_step(x, y)
-                for ls, l in zip(losses, step_losses):
-                    ls.append(l.data[0])
-                t1 = time.time()
-                dt = t1 - t0
-                if dt > 10:
-                    log()
-                    jaccard_stats = self._jaccard_stats()
-                    t0 = t1
-            if losses:
+        map_ = map if no_mp else partial(utils.imap_fixed_output_buffer, processes=4)
+        for i, (x, y) in enumerate(map_(gen_batch, range(n_batches))):
+            if losses[0] and i % log_step == 0:
+                for cls, ls in zip(self.hps.classes, losses):
+                    self._log_value(
+                        'loss/cls-{}'.format(cls), np.mean(ls[-log_step:]))
+                pred_y = self.net(self._var(x)).data.cpu()
+                self._update_jaccard(jaccard_stats, y.numpy(), pred_y.numpy())
+                self._log_jaccard(jaccard_stats)
+                if i == im_log_step:
+                    self._log_im(x.numpy(), y.numpy(), pred_y.numpy())
+            step_losses = self.train_step(x, y)
+            for ls, l in zip(losses, step_losses):
+                ls.append(l.data[0])
+            t1 = time.time()
+            dt = t1 - t0
+            if dt > 10:
                 log()
+                jaccard_stats = self._jaccard_stats()
+                t0 = t1
+        if losses:
+            log()
 
     def _jaccard_stats(self):
         return {cls: {threshold: [[] for _ in range(3)]

@@ -4,7 +4,7 @@ import csv
 import json
 from functools import partial
 from pathlib import Path
-from multiprocessing.pool import Pool, ThreadPool
+from multiprocessing.pool import Pool
 import traceback
 from typing import List
 
@@ -55,35 +55,20 @@ def main():
     logger.info('Predicting masks')
     train_ids = set(utils.get_wkt_data())
     to_predict = train_ids if args.train_only else set(only or image_ids)
+    im_path = lambda im_id: store.joinpath('{}.mask'.format(im_id))
+    to_predict = sorted(im_id for im_id in to_predict
+                        if not im_path(im_id).exists())
 
-    def im_to_predict():
-        for im_id in sorted(to_predict):
-            im_path = store.joinpath('{}.mask'.format(im_id))
-            if im_path.exists():
-                logger.info('Skip {}: already exists'.format(im_id))
-                continue
-            im = Image(id=im_id,
-                       data=model.preprocess_image(utils.load_image(im_id)))
-            yield im_path, im
+    def load_im(im_id):
+        return Image(id=im_id,
+                     data=model.preprocess_image(utils.load_image(im_id)))
 
-    def predict(im):
+    for im in utils.imap_fixed_output_buffer(load_im, to_predict, threads=2):
         logger.info(im.id)
         mask = model.predict_image_mask(im).astype(np.float16)
+        # TODO - do type conversion and saving in another thread
         assert mask.shape[1:] == im.data.shape[1:]
-        return mask
-
-    def masks():
-        with ThreadPool(processes=1) as pool:
-            future = im_path = None
-            for im_path, im in im_to_predict():
-                if future is not None:
-                    yield im_path, future.get()
-                future = pool.apply_async(predict, (im,))
-            if future is not None:
-                yield im_path, future.get()
-
-    for im_path, mask in masks():
-        with im_path.open('wb') as f:
+        with im_path(im.id).open('wb') as f:
             np.save(f, mask)
 
     if args.masks_only:

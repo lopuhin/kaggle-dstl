@@ -3,6 +3,7 @@ from collections import defaultdict
 from itertools import islice
 import logging
 import json
+from multiprocessing.pool import ThreadPool
 from typing import Dict, Tuple
 import sys
 
@@ -205,7 +206,7 @@ def mask_to_polygons(mask: np.ndarray, epsilon=5., min_area=10.)\
             all_polygons.append(poly)
 
     all_polygons = MultiPolygon(all_polygons)
-    all_polygons = all_polygons.buffer(0.001)
+    all_polygons = all_polygons.buffer(0.1)
     # Sometimes buffer() converts a simple Multipolygon to just a Polygon,
     # need to keep it a Multi throughout
     if all_polygons.type == 'Polygon':
@@ -238,3 +239,16 @@ def get_logger(name):
 
 
 logger = get_logger(__name__)
+
+
+def imap_fixed_output_buffer(fn, it, threads: int):
+    with ThreadPool(processes=threads) as pool:
+        futures = []
+        max_futures = threads + 1
+        for x in it:
+            while len(futures) >= max_futures:
+                future, futures = futures[0], futures[1:]
+                yield future.get()
+            futures.append(pool.apply_async(fn, (x,)))
+        for future in futures:
+            yield future.get()
