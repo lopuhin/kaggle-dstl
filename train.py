@@ -319,8 +319,8 @@ class Model:
             rgb = utils.scale_percentile(x[:3].transpose(1, 2, 0))
             cv2.imwrite(fname('x'), np.maximum(border, rgb) * 255)
             for cls, c_y, c_p in zip(self.hps.classes, y, p):
-                cv2.imwrite(fname('y_{}'.format(cls)), c_y * 255)
-                cv2.imwrite(fname('z_{}'.format(cls)), c_p * 255)
+                cv2.imwrite(fname('{}_y'.format(cls)), c_y * 255)
+                cv2.imwrite(fname('{}_z'.format(cls)), c_p * 255)
 
     def _log_value(self, name, value):
         self.tb_logger.log_value(name, value, step=self.net.global_step[0])
