@@ -23,6 +23,7 @@ class HyperParams:
 
     dropout_keep_prob = attr.ib(default=0.0)  # TODO
     bn = attr.ib(default=0)
+    activation = attr.ib(default='relu')
     dice_loss = attr.ib(default=0)
 
     filters_base = attr.ib(default=32)
@@ -151,12 +152,13 @@ class SmallUNet(BaseNet):
 
 
 class UNetModule(nn.Module):
-    def __init__(self, in_, out, bn=False):
+    def __init__(self, hps: HyperParams, in_: int, out: int):
         super().__init__()
         self.conv1 = conv3x3(in_, out)
         self.conv2 = conv3x3(out, out)
-        self.bn = bn
-        if bn:
+        self.bn = hps.bn
+        self.activation = getattr(F, hps.activation)
+        if self.bn:
             self.bn1 = nn.BatchNorm2d(out)
             self.bn2 = nn.BatchNorm2d(out)
 
@@ -164,11 +166,11 @@ class UNetModule(nn.Module):
         x = self.conv1(x)
         if self.bn:
             x = self.bn1(x)
-        x = F.relu(x)
+        x = self.activation(x)
         x = self.conv2(x)
         if self.bn:
             x = self.bn2(x)
-        x = F.relu(x)
+        x = self.activation(x)
         return x
 
 
@@ -181,10 +183,10 @@ class UNet(BaseNet):
         self.down, self.up = [], []
         for i, nf in enumerate(self.filters):
             low_nf = hps.n_channels if i == 0 else self.filters[i - 1]
-            self.down.append(UNetModule(low_nf, nf, bn=hps.bn))
+            self.down.append(UNetModule(hps, low_nf, nf))
             setattr(self, 'down_{}'.format(i), self.down[-1])
             if i != 0:
-                self.up.append(UNetModule(low_nf + nf, low_nf, bn=hps.bn))
+                self.up.append(UNetModule(hps, low_nf + nf, low_nf))
                 setattr(self, 'conv_up_{}'.format(i), self.up[-1])
         self.conv_final = nn.Conv2d(self.filters[0], hps.n_classes, 1)
 
