@@ -393,7 +393,7 @@ class Model:
         all_xy = [(x, y) for x in xs for y in ys]
         pred_mask = np.zeros([self.hps.n_classes, w, h], dtype=np.float32)
         for xy_batch in tqdm.tqdm(
-                list(utils.chunks(all_xy, self.hps.batch_size))):
+                list(utils.chunks(all_xy, self.hps.batch_size // 2))):
             inputs = np.array(
                 [im.data[:, x - b: x + s + b, y - b: y + s + b]
                  for x, y in xy_batch]).astype(np.float32)

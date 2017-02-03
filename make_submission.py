@@ -5,10 +5,10 @@ import json
 from functools import partial
 from pathlib import Path
 from multiprocessing.pool import Pool
-from concurrent.futures import ThreadPoolExecutor
 import traceback
-from typing import List
+from typing import List, Tuple
 
+import cv2
 import numpy as np
 import shapely.affinity
 from shapely.geometry import MultiPolygon
@@ -31,10 +31,12 @@ def main():
     arg('--only', help='Only predict these image ids (comma-separated)')
     arg('--threshold', type=float, default=0.5)
     arg('--epsilon', type=float, default=5.0, help='smoothing')
+    arg('--min-area', type=float, default=50.0)
     arg('--masks-only', action='store_true', help='Do only mask prediction')
     arg('--model-path', type=Path,
         help='Path to a specific model (if the last is not desired)')
     arg('--processes', type=int, default=4)
+    arg('--debug', action='store_true', help='save masks and polygons as png')
     args = parser.parse_args()
     hps = HyperParams(**json.loads(
         args.logdir.joinpath('hps.json').read_text()))
@@ -51,11 +53,11 @@ def main():
     to_predict = set(train_ids)
     if not args.train_only:
         to_predict |= set(only or image_ids)
-    im_path = lambda im_id: store.joinpath('{}.mask'.format(im_id))
-    to_predict = [im_id for im_id in to_predict if not im_path(im_id).exists()]
+    to_predict = [im_id for im_id in to_predict
+                  if not mask_path(store, im_id).exists()]
 
     if to_predict:
-        predict_masks(args, hps, im_path, to_predict)
+        predict_masks(args, hps, store, to_predict)
     if args.masks_only:
         logger.info('Was building masks only, done.')
         return
@@ -76,6 +78,9 @@ def main():
                             threshold=args.threshold,
                             classes=hps.classes,
                             epsilon=args.epsilon,
+                            min_area=args.min_area,
+                            debug=args.debug,
+                            train_only=args.train_only,
                             ),
                     to_output):
                 assert len(rows) == hps.n_classes
@@ -102,7 +107,11 @@ def main():
             logger.info('cls-{} size: {:,} bytes'.format(cls, size))
 
 
-def predict_masks(args, hps, im_path, to_predict: List[str]):
+def mask_path(store: Path, im_id: str) -> Path:
+    return store.joinpath('{}.mask'.format(im_id))
+
+
+def predict_masks(args, hps, store, to_predict: List[str]):
     logger.info('Predicting {} masks: {}'
                 .format(len(to_predict), ', '.join(sorted(to_predict))))
     model = Model(hps=hps)
@@ -125,45 +134,58 @@ def predict_masks(args, hps, im_path, to_predict: List[str]):
     for im, mask in utils.imap_fixed_output_buffer(
             lambda _: next(im_masks), to_predict, threads=1):
         assert mask.shape[1:] == im.data.shape[1:]
-        with im_path(im.id).open('wb') as f:
+        with mask_path(store, im.id).open('wb') as f:
             np.save(f, mask.astype(np.float16))
 
 
-def get_poly_data(im_id, *, store, classes: List[int],
-                  threshold: float, epsilon: float):
-    mask_path = store.joinpath('{}.mask'.format(im_id))
+def get_poly_data(im_id, *,
+                  store: Path,
+                  classes: List[int],
+                  threshold: float,
+                  epsilon: float,
+                  min_area: float,
+                  debug: bool,
+                  train_only: bool
+                  ):
     train_polygons = utils.get_wkt_data().get(im_id)
     jaccard_stats = []
-    if mask_path.exists():
+    if mask_path(store, im_id).exists():
         logger.info(im_id)
-        masks = np.load(str(mask_path))
+        masks = np.load(str(mask_path(store, im_id)))
         masks = masks > threshold  # type: np.ndarray
         rows = []
         for cls, mask in zip(classes, masks):
             poly_type = cls + 1
-            pred_poly = get_polygons(im_id, mask, epsilon, cls)
+            unscaled, pred_poly = get_polygons(im_id, mask, epsilon, min_area)
+            if debug:
+                cv2.imwrite(
+                    str(store / '{}_{}_poly_mask.png'.format(im_id, cls)),
+                    255 * utils.mask_for_polygons(mask.shape, unscaled))
+                cv2.imwrite(
+                    str(store / '{}_{}_pixel_mask.png'.format(im_id, cls)),
+                    255 * mask)
             if train_polygons:
                 train_poly = train_polygons[poly_type]
                 jaccard_stats.append(
                     log_jaccard(im_id, pred_poly, train_poly, mask, threshold))
-                rows.append((im_id, str(poly_type), train_polygons[poly_type]))
-            else:
-                rows.append(
-                    (im_id, str(poly_type), shapely.wkt.dumps(pred_poly)))
+            rows.append((im_id, str(poly_type),
+                         shapely.wkt.dumps(pred_poly) if train_only else
+                         'MULTIPOLYGON EMPTY'))
     else:
         logger.info('{} empty'.format(im_id))
         rows = [(im_id, str(cls + 1), 'MULTIPOLYGON EMPTY') for cls in classes]
     return rows, jaccard_stats
 
 
-def get_polygons(im_id: str, mask: np.ndarray, epsilon: float, cls: int)\
-        -> MultiPolygon:
+def get_polygons(im_id: str, mask: np.ndarray,
+                 epsilon: float, min_area: float,
+                 ) -> Tuple[MultiPolygon, MultiPolygon]:
     assert len(mask.shape) == 2
     x_scaler, y_scaler = utils.get_scalers(im_id, im_size=mask.shape)
     x_scaler = 1 / x_scaler
     y_scaler = 1 / y_scaler
-    polygons = utils.mask_to_polygons(mask, epsilon=epsilon)
-    return shapely.affinity.scale(
+    polygons = utils.mask_to_polygons(mask, epsilon=epsilon, min_area=min_area)
+    return polygons, shapely.affinity.scale(
         polygons, xfact=x_scaler, yfact=y_scaler, origin=(0, 0, 0))
 
 
