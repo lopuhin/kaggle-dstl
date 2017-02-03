@@ -32,6 +32,7 @@ def main():
     arg('--threshold', type=float, default=0.5)
     arg('--epsilon', type=float, default=5.0, help='smoothing')
     arg('--min-area', type=float, default=50.0)
+    arg('--min-car-area', type=float, default=10.0)
     arg('--masks-only', action='store_true', help='Do only mask prediction')
     arg('--model-path', type=Path,
         help='Path to a specific model (if the last is not desired)')
@@ -79,6 +80,7 @@ def main():
                             classes=hps.classes,
                             epsilon=args.epsilon,
                             min_area=args.min_area,
+                            min_car_area=args.min_car_area,
                             debug=args.debug,
                             train_only=args.train_only,
                             ),
@@ -144,6 +146,7 @@ def get_poly_data(im_id, *,
                   threshold: float,
                   epsilon: float,
                   min_area: float,
+                  min_car_area: float,
                   debug: bool,
                   train_only: bool
                   ):
@@ -156,21 +159,27 @@ def get_poly_data(im_id, *,
         rows = []
         for cls, mask in zip(classes, masks):
             poly_type = cls + 1
-            unscaled, pred_poly = get_polygons(im_id, mask, epsilon, min_area)
-            if debug:
-                cv2.imwrite(
-                    str(store / '{}_{}_poly_mask.png'.format(im_id, cls)),
-                    255 * utils.mask_for_polygons(mask.shape, unscaled))
-                cv2.imwrite(
-                    str(store / '{}_{}_pixel_mask.png'.format(im_id, cls)),
-                    255 * mask)
-            if train_polygons:
+            if train_only or not train_polygons:
+                unscaled, pred_poly = get_polygons(
+                    im_id, mask, epsilon,
+                    min_area=min_car_area if cls in {8, 9} else min_area)
+                if debug:
+                    cv2.imwrite(
+                        str(store / '{}_{}_poly_mask.png'.format(im_id, cls)),
+                        255 * utils.mask_for_polygons(mask.shape, unscaled))
+                    cv2.imwrite(
+                        str(store / '{}_{}_pixel_mask.png'.format(im_id, cls)),
+                        255 * mask)
+                rows.append((im_id, str(poly_type),
+                             shapely.wkt.dumps(pred_poly)))
+            elif train_polygons:
+                rows.append((im_id, str(poly_type), 'MULTIPOLYGON EMPTY'))
+            else:
+                assert False
+            if train_only and train_polygons:
                 train_poly = train_polygons[poly_type]
                 jaccard_stats.append(
                     log_jaccard(im_id, pred_poly, train_poly, mask, threshold))
-            rows.append((im_id, str(poly_type),
-                         shapely.wkt.dumps(pred_poly) if train_only else
-                         'MULTIPOLYGON EMPTY'))
     else:
         logger.info('{} empty'.format(im_id))
         rows = [(im_id, str(cls + 1), 'MULTIPOLYGON EMPTY') for cls in classes]
@@ -178,7 +187,7 @@ def get_poly_data(im_id, *,
 
 
 def get_polygons(im_id: str, mask: np.ndarray,
-                 epsilon: float, min_area: float,
+                 epsilon: float, min_area: float
                  ) -> Tuple[MultiPolygon, MultiPolygon]:
     assert len(mask.shape) == 2
     x_scaler, y_scaler = utils.get_scalers(im_id, im_size=mask.shape)
