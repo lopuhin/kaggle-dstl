@@ -24,7 +24,7 @@ class HyperParams:
     dropout_keep_prob = attr.ib(default=0.0)  # TODO
     bn = attr.ib(default=0)
     activation = attr.ib(default='relu')
-    dice_loss = attr.ib(default=0)
+    dice_loss = attr.ib(default=0.0)
 
     filters_base = attr.ib(default=32)
 
@@ -39,15 +39,17 @@ class HyperParams:
 
     def update(self, hps_string: str):
         if hps_string:
-            for pair in hps_string.split(','):
-                k, v = pair.split('=')
-                if k == 'classes':
-                    v = [int(x) for x in v.split('-')]
-                elif '.' in v:
-                    v = float(v)
-                elif k != 'net':
-                    v = int(v)
-                setattr(self, k, v)
+            values = dict(pair.split('=') for pair in hps_string.split(','))
+            for field in attr.fields(HyperParams):
+                v = values.get(field.name)
+                if v is not None:
+                    default = field.default
+                    assert not isinstance(default, bool)
+                    if isinstance(default, (int, float, str)):
+                        v = type(default)(v)
+                    elif isinstance(default, list):
+                        v = [int(x) for x in v.split('-')]
+                    setattr(self, field.name, v)
 
 
 class BaseNet(nn.Module):
