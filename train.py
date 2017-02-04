@@ -429,16 +429,21 @@ def main():
     arg('--clean', action='store_true', help='Clean logdir')
     arg('--no-mp', action='store_true', help='Disable multiprocessing')
     args = parser.parse_args()
-    hps = HyperParams()
-    hps.update(args.hps)
-    pprint(attr.asdict(hps))
+
     logdir = Path(args.logdir)
     logdir.mkdir(exist_ok=True, parents=True)
     if args.clean:
         for p in logdir.iterdir():
             p.unlink()
-    logdir.joinpath('hps.json').write_text(
-        json.dumps(attr.asdict(hps), indent=True, sort_keys=True))
+
+    if args.hps == 'load':
+        hps = HyperParams(**json.loads(logdir.joinpath('hps.json').read_text()))
+    else:
+        hps = HyperParams()
+        hps.update(args.hps)
+        logdir.joinpath('hps.json').write_text(
+            json.dumps(attr.asdict(hps), indent=True, sort_keys=True))
+    pprint(attr.asdict(hps))
 
     model = Model(hps=hps)
     all_im_ids = list(utils.get_wkt_data())
