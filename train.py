@@ -248,7 +248,8 @@ class Model:
                         'loss/cls-{}'.format(cls), np.mean(ls[-log_step:]))
                 if self.hps.has_all_classes:
                     self._log_value(
-                        'loss/cls-mean', np.mean(losses[:, -log_step:]))
+                        'loss/cls-mean', np.mean([
+                            l for ls in losses for l in ls[-log_step:]]))
                 pred_y = self.net(self._var(x)).data.cpu()
                 self._update_jaccard(jaccard_stats, y.numpy(), pred_y.numpy())
                 self._log_jaccard(jaccard_stats)
