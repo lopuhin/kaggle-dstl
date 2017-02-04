@@ -14,6 +14,7 @@ def main():
     arg('inputs', nargs='+')
     arg('--skip', nargs='+')
     args = parser.parse_args()
+    skip = set(args.skip or [])
     all_data = {}
     for path in map(Path, args.inputs):
         print('Reading {}'.format(path))
@@ -31,7 +32,7 @@ def main():
             writer.writerow(header)
             for im_id, poly_type, _ in reader:
                 poly = 'MULTIPOLYGON EMPTY'
-                if '{}_{}'.format(im_id, poly_type) not in args.skip:
+                if '{}_{}'.format(im_id, poly_type) not in skip:
                     poly = all_data.get((im_id, poly_type)) or poly
                 writer.writerow([im_id, poly_type, poly])
 

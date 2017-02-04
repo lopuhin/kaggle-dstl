@@ -7,7 +7,7 @@ from functools import partial
 from pathlib import Path
 from multiprocessing.pool import Pool
 import traceback
-from typing import List, Tuple
+from typing import List, Tuple, Set
 
 import cv2
 import numpy as np
@@ -37,9 +37,11 @@ def main():
     arg('--masks-only', action='store_true', help='Do only mask prediction')
     arg('--model-path', type=Path,
         help='Path to a specific model (if the last is not desired)')
-    arg('--processes', type=int, default=4)
+    arg('--processes', type=int, default=30)
     arg('--debug', action='store_true', help='save masks and polygons as png')
+    arg('--fix', nargs='+')
     args = parser.parse_args()
+    to_fix = set(args.fix or [])
     hps = HyperParams(**json.loads(
         args.logdir.joinpath('hps.json').read_text()))
 
@@ -65,16 +67,15 @@ def main():
         return
 
     logger.info('Building polygons')
-    with open(args.output, 'wt') as f:
+    opener = gzip.open if args.output.endswith('.gz') else open
+    with opener(args.output, 'wt') as f:
         writer = csv.writer(f)
         writer.writerow(header)
         to_output = train_ids if args.train_only else (only or image_ids)
         jaccard_stats = [[] for _ in hps.classes]
         sizes = [0 for _ in hps.classes]
         with Pool(processes=args.processes) as pool:
-            # The order will be wrong, but we don't care,
-            # it's fixed in merge_submission.
-            for rows, js in pool.imap_unordered(
+            for rows, js in pool.imap(
                     partial(get_poly_data,
                             store=store,
                             classes=hps.classes,
@@ -83,6 +84,7 @@ def main():
                             min_car_area=args.min_car_area,
                             debug=args.debug,
                             train_only=args.train_only,
+                            to_fix=to_fix,
                             ),
                     to_output):
                 assert len(rows) == hps.n_classes
@@ -136,7 +138,7 @@ def predict_masks(args, hps, store, to_predict: List[str], threshold: float):
     for im, mask in utils.imap_fixed_output_buffer(
             lambda _: next(im_masks), to_predict, threads=1):
         assert mask.shape[1:] == im.data.shape[1:]
-        with gzip.open(str(mask_path(store, im.id), 'wb') as f:
+        with gzip.open(str(mask_path(store, im.id)), 'wb') as f:
             np.save(f, mask >= threshold)
 
 
@@ -147,7 +149,8 @@ def get_poly_data(im_id, *,
                   min_area: float,
                   min_car_area: float,
                   debug: bool,
-                  train_only: bool
+                  train_only: bool,
+                  to_fix: Set[str]
                   ):
     train_polygons = utils.get_wkt_data().get(im_id)
     jaccard_stats = []
@@ -162,7 +165,9 @@ def get_poly_data(im_id, *,
             if train_only or not train_polygons:
                 unscaled, pred_poly = get_polygons(
                     im_id, mask, epsilon,
-                    min_area=min_car_area if cls in {8, 9} else min_area)
+                    min_area=min_car_area if cls in {8, 9} else min_area,
+                    fix='{}_{}'.format(im_id, poly_type) in to_fix,
+                )
                 if debug:
                     cv2.imwrite(
                         str(store / '{}_{}_poly_mask.png'.format(im_id, cls)),
@@ -188,13 +193,14 @@ def get_poly_data(im_id, *,
 
 
 def get_polygons(im_id: str, mask: np.ndarray,
-                 epsilon: float, min_area: float
+                 epsilon: float, min_area: float, fix: bool
                  ) -> Tuple[MultiPolygon, MultiPolygon]:
     assert len(mask.shape) == 2
     x_scaler, y_scaler = utils.get_scalers(im_id, im_size=mask.shape)
     x_scaler = 1 / x_scaler
     y_scaler = 1 / y_scaler
-    polygons = utils.mask_to_polygons(mask, epsilon=epsilon, min_area=min_area)
+    polygons = utils.mask_to_polygons(
+        mask, epsilon=epsilon, min_area=min_area, fix=fix)
     return polygons, shapely.affinity.scale(
         polygons, xfact=x_scaler, yfact=y_scaler, origin=(0, 0, 0))
 

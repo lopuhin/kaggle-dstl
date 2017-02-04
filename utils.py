@@ -177,8 +177,8 @@ def chunks(lst, n):
         yield lst[i: i + n]
 
 
-def mask_to_polygons(mask: np.ndarray, epsilon=5., min_area=10.)\
-        -> MultiPolygon:
+def mask_to_polygons(mask: np.ndarray, epsilon=5., min_area=10.,
+                     fix=False) -> MultiPolygon:
     image, contours, hierarchy = cv2.findContours(
         ((mask == 1) * 255).astype(np.uint8),
         cv2.RETR_CCOMP, cv2.CHAIN_APPROX_TC89_KCOS)
@@ -208,12 +208,16 @@ def mask_to_polygons(mask: np.ndarray, epsilon=5., min_area=10.)\
     all_polygons = MultiPolygon(all_polygons)
     all_polygons = shapely.wkt.loads(
         shapely.wkt.dumps(all_polygons, rounding_precision=8))
-    if not all_polygons.is_valid:
-        all_polygons = all_polygons.buffer(0.000001)
+    if fix:
+        all_polygons = all_polygons.buffer(-1)
+    while not all_polygons.is_valid:
+        all_polygons = all_polygons.buffer(0)
         # Sometimes buffer() converts a simple Multipolygon to just a Polygon,
         # need to keep it a Multi throughout
         if all_polygons.type == 'Polygon':
             all_polygons = MultiPolygon([all_polygons])
+        all_polygons = shapely.wkt.loads(
+            shapely.wkt.dumps(all_polygons, rounding_precision=8))
     return all_polygons
 
 
