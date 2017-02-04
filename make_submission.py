@@ -2,6 +2,7 @@
 import argparse
 import csv
 import json
+import gzip
 from functools import partial
 from pathlib import Path
 from multiprocessing.pool import Pool
@@ -58,7 +59,7 @@ def main():
                   if not mask_path(store, im_id).exists()]
 
     if to_predict:
-        predict_masks(args, hps, store, to_predict)
+        predict_masks(args, hps, store, to_predict, args.threshold)
     if args.masks_only:
         logger.info('Was building masks only, done.')
         return
@@ -76,7 +77,6 @@ def main():
             for rows, js in pool.imap_unordered(
                     partial(get_poly_data,
                             store=store,
-                            threshold=args.threshold,
                             classes=hps.classes,
                             epsilon=args.epsilon,
                             min_area=args.min_area,
@@ -91,7 +91,7 @@ def main():
                     cls_jss.append(cls_js)
                 for idx, (_, _, poly) in enumerate(rows):
                     sizes[idx] += len(poly)
-        if args.train_only:
+        if args.train_only and args.debug:
             for cls, cls_js in zip(hps.classes, jaccard_stats):
                 intersection = union = tp = fp = fn = 0
                 for (_tp, _fp, _fn), (_intersection, _union) in cls_js:
@@ -110,10 +110,10 @@ def main():
 
 
 def mask_path(store: Path, im_id: str) -> Path:
-    return store.joinpath('{}.mask'.format(im_id))
+    return store.joinpath('{}.bin-mask.gz'.format(im_id))
 
 
-def predict_masks(args, hps, store, to_predict: List[str]):
+def predict_masks(args, hps, store, to_predict: List[str], threshold: float):
     logger.info('Predicting {} masks: {}'
                 .format(len(to_predict), ', '.join(sorted(to_predict))))
     model = Model(hps=hps)
@@ -136,14 +136,13 @@ def predict_masks(args, hps, store, to_predict: List[str]):
     for im, mask in utils.imap_fixed_output_buffer(
             lambda _: next(im_masks), to_predict, threads=1):
         assert mask.shape[1:] == im.data.shape[1:]
-        with mask_path(store, im.id).open('wb') as f:
-            np.save(f, mask.astype(np.float16))
+        with gzip.open(str(mask_path(store, im.id), 'wb') as f:
+            np.save(f, mask >= threshold)
 
 
 def get_poly_data(im_id, *,
                   store: Path,
                   classes: List[int],
-                  threshold: float,
                   epsilon: float,
                   min_area: float,
                   min_car_area: float,
@@ -152,10 +151,11 @@ def get_poly_data(im_id, *,
                   ):
     train_polygons = utils.get_wkt_data().get(im_id)
     jaccard_stats = []
-    if mask_path(store, im_id).exists():
+    path = mask_path(store, im_id)
+    if path.exists():
         logger.info(im_id)
-        masks = np.load(str(mask_path(store, im_id)))
-        masks = masks > threshold  # type: np.ndarray
+        with gzip.open(str(path), 'rb') as f:
+            masks = np.load(f)  # type: np.ndarray
         rows = []
         for cls, mask in zip(classes, masks):
             poly_type = cls + 1
@@ -170,16 +170,17 @@ def get_poly_data(im_id, *,
                     cv2.imwrite(
                         str(store / '{}_{}_pixel_mask.png'.format(im_id, cls)),
                         255 * mask)
-                rows.append((im_id, str(poly_type),
-                             shapely.wkt.dumps(pred_poly)))
+                rows.append(
+                    (im_id, str(poly_type),
+                     shapely.wkt.dumps(pred_poly, rounding_precision=8)))
             elif train_polygons:
                 rows.append((im_id, str(poly_type), 'MULTIPOLYGON EMPTY'))
             else:
                 assert False
-            if train_only and train_polygons:
+            if train_only and train_polygons and debug:
                 train_poly = train_polygons[poly_type]
                 jaccard_stats.append(
-                    log_jaccard(im_id, pred_poly, train_poly, mask, threshold))
+                    log_jaccard(im_id, pred_poly, train_poly, mask))
     else:
         logger.info('{} empty'.format(im_id))
         rows = [(im_id, str(cls + 1), 'MULTIPOLYGON EMPTY') for cls in classes]
@@ -198,13 +199,13 @@ def get_polygons(im_id: str, mask: np.ndarray,
         polygons, xfact=x_scaler, yfact=y_scaler, origin=(0, 0, 0))
 
 
-def log_jaccard(im_id, pred_poly, train_poly, mask, threshold):
+def log_jaccard(im_id, pred_poly, train_poly, mask):
     im_size = mask.shape
     train_poly = shapely.wkt.loads(train_poly)
     scaled_train_poly = utils.scale_to_mask(im_id, im_size, train_poly)
     true_mask = utils.mask_for_polygons(im_size, scaled_train_poly)
     assert len(mask.shape) == 2
-    tp, fp, fn = tp_fp_fn = utils.mask_tp_fp_fn(mask, true_mask, threshold)
+    tp, fp, fn = tp_fp_fn = utils.mask_tp_fp_fn(mask, true_mask, 0.5)
     try:
         intersection = pred_poly.intersection(train_poly).area
         union = pred_poly.union(train_poly).area
