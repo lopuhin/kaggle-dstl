@@ -174,9 +174,9 @@ class Model:
         # Extra margin for rotation
         m = int(np.ceil((np.sqrt(2) - 1) * (b + s / 2)))
         mb = m + b  # full margin
-        avg_area = np.mean(
+        mean_area = np.mean(
             [im.size[0] * im.size[1] for im in train_images])
-        n_batches = int(avg_area / (s + b) / self.hps.batch_size / subsample)
+        n_batches = int(mean_area / (s + b) / self.hps.batch_size / subsample)
 
         def gen_batch(_):
             inputs, outputs = [], []
@@ -246,6 +246,9 @@ class Model:
                 for cls, ls in zip(self.hps.classes, losses):
                     self._log_value(
                         'loss/cls-{}'.format(cls), np.mean(ls[-log_step:]))
+                if self.hps.has_all_classes:
+                    self._log_value(
+                        'loss/cls-mean', np.mean(losses[:, -log_step:]))
                 pred_y = self.net(self._var(x)).data.cpu()
                 self._update_jaccard(jaccard_stats, y.numpy(), pred_y.numpy())
                 self._log_jaccard(jaccard_stats)
@@ -286,13 +289,22 @@ class Model:
                 fn.append(_fn)
 
     def _log_jaccard(self, stats, prefix=''):
+        jaccard_by_threshold = {}
         for cls, tp_fp_fn in stats.items():
             for threshold, (tp, fp, fn) in tp_fp_fn.items():
+                jaccard = self._jaccard(tp, fp, fn)
                 self._log_value(
                     '{}jaccard-{}/cls-{}'.format(prefix, threshold, cls),
-                    self._jaccard(tp, fp, fn))
+                    jaccard)
+                jaccard_by_threshold.setdefault(threshold, []).append(jaccard)
+        if self.hps.has_all_classes:
+            for threshold, jaccards in jaccard_by_threshold.items():
+                self._log_value(
+                    '{}jaccard-{}/cls-mean'.format(prefix, threshold),
+                    np.mean(jaccards))
 
-    def _jaccard(self, tp, fp, fn):
+    @staticmethod
+    def _jaccard(tp, fp, fn):
         if sum(tp) == 0:
             return 0
         return sum(tp) / (sum(tp) + sum(fn) + sum(fp))

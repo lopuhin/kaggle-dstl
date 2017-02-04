@@ -37,6 +37,10 @@ class HyperParams:
     def n_classes(self):
         return len(self.classes)
 
+    @property
+    def has_all_classes(self):
+        return self.n_classes == self.total_classes
+
     def update(self, hps_string: str):
         if hps_string:
             values = dict(pair.split('=') for pair in hps_string.split(','))
