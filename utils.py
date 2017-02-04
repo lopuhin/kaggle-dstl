@@ -179,6 +179,8 @@ def chunks(lst, n):
 
 def mask_to_polygons(mask: np.ndarray, epsilon=5., min_area=10.,
                      fix=False) -> MultiPolygon:
+    if fix:
+        epsilon *= 2
     image, contours, hierarchy = cv2.findContours(
         ((mask == 1) * 255).astype(np.uint8),
         cv2.RETR_CCOMP, cv2.CHAIN_APPROX_TC89_KCOS)

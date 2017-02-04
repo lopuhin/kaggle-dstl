@@ -29,7 +29,7 @@ def main():
     arg('--train-only', action='store_true', help='Predict only train images')
     arg('--only', help='Only predict these image ids (comma-separated)')
     arg('--threshold', type=float, default=0.5)
-    arg('--epsilon', type=float, default=5.0, help='smoothing')
+    arg('--epsilon', type=float, default=2.0, help='smoothing')
     arg('--min-area', type=float, default=50.0)
     arg('--min-car-area', type=float, default=10.0)
     arg('--masks-only', action='store_true', help='Do only mask prediction')
