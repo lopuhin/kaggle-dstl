@@ -83,6 +83,7 @@ def main():
                             debug=args.debug,
                             train_only=args.train_only,
                             to_fix=to_fix,
+                            hps=hps,
                             ),
                     to_output):
                 assert len(rows) == hps.n_classes
@@ -150,7 +151,8 @@ def get_poly_data(im_id, *,
                   min_car_area: float,
                   debug: bool,
                   train_only: bool,
-                  to_fix: Set[str]
+                  to_fix: Set[str],
+                  hps: HyperParams
                   ):
     train_polygons = utils.get_wkt_data().get(im_id)
     jaccard_stats = []
@@ -186,7 +188,7 @@ def get_poly_data(im_id, *,
             if train_only and train_polygons and debug:
                 train_poly = train_polygons[poly_type]
                 jaccard_stats.append(
-                    log_jaccard(im_id, train_poly, mask, poly_mask))
+                    log_jaccard(im_id, train_poly, mask, poly_mask, hps))
     else:
         logger.info('{} empty'.format(im_id))
         rows = [(im_id, str(cls + 1), 'MULTIPOLYGON EMPTY') for cls in classes]
@@ -206,12 +208,16 @@ def get_polygons(im_id: str, mask: np.ndarray,
         polygons, xfact=x_scaler, yfact=y_scaler, origin=(0, 0, 0))
 
 
-def log_jaccard(im_id, train_poly, mask, poly_mask):
+def log_jaccard(im_id, train_poly, mask, poly_mask, hps):
     im_size = mask.shape
     train_poly = shapely.wkt.loads(train_poly)
     scaled_train_poly = utils.scale_to_mask(im_id, im_size, train_poly)
     true_mask = utils.mask_for_polygons(im_size, scaled_train_poly)
     assert len(mask.shape) == 2
+    square = lambda x: x[:hps.validation_square, :hps.validation_square]
+    mask = square(mask)
+    poly_mask = square(poly_mask)
+    true_mask = square(true_mask)
     pixel_jc = utils.mask_tp_fp_fn(mask, true_mask, 0.5)
     poly_jc = utils.mask_tp_fp_fn(poly_mask, true_mask, 0.5)
     logger.info('pixel jaccard: {:.5f}, polygon jaccard: {:.5f}'
