@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+
 import attr
 import torch
 import torch.cuda
@@ -40,6 +43,10 @@ class HyperParams:
     @property
     def has_all_classes(self):
         return self.n_classes == self.total_classes
+
+    @classmethod
+    def from_dir(cls, root: Path):
+        return cls(**json.loads(root.joinpath('hps.json').read_text()))
 
     def update(self, hps_string: str):
         if hps_string:

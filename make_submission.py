@@ -130,7 +130,7 @@ def predict_masks(args, hps, store, to_predict: List[str], threshold: float):
 
     def predict_mask(im):
         logger.info(im.id)
-        return im, model.predict_image_mask(im)
+        return im, model.predict_image_mask(im.data)
 
     im_masks = map(predict_mask, utils.imap_fixed_output_buffer(
         load_im, sorted(to_predict), threads=2))

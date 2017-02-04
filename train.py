@@ -395,24 +395,34 @@ class Model:
     def _model_path(self, logdir: Path, n_epoch: int) -> Path:
         return logdir.joinpath('model-{}'.format(n_epoch))
 
-    def predict_image_mask(self, im: Image) -> np.ndarray:
+    def predict_image_mask(self, im_data: np.ndarray, rotate: bool=False
+                           ) -> np.ndarray:
         self.net.eval()
         # FIXME - some copy-paste
-        w, h = im.size
+        w, h = im_data.shape[1:]
         b = self.hps.patch_border
         s = self.hps.patch_inner
         xs = range(b, w - (b + s), s)
         ys = range(b, h - (b + s), s)
         all_xy = [(x, y) for x in xs for y in ys]
         pred_mask = np.zeros([self.hps.n_classes, w, h], dtype=np.float32)
+        n_rot = 4 if rotate else 1
         for xy_batch in tqdm.tqdm(
-                list(utils.chunks(all_xy, self.hps.batch_size // 2))):
-            inputs = np.array(
-                [im.data[:, x - b: x + s + b, y - b: y + s + b]
-                 for x, y in xy_batch]).astype(np.float32)
+                list(utils.chunks(all_xy, self.hps.batch_size // (2 * n_rot)))):
+            inputs = []
+            for x, y in xy_batch:
+                patch = im_data[:, x - b: x + s + b, y - b: y + s + b]
+                inputs.append(patch)
+                for i in range(1, n_rot):
+                    inputs.append(utils.rotated(patch, i * 90))
+            inputs = np.array(inputs, dtype=np.float32)
             y_pred = self.net(self._var(torch.from_numpy(inputs)))
-            for (x, y), mask in zip(xy_batch, y_pred.data.cpu().numpy()):
-                pred_mask[:, x: x + s, y: y + s] = mask
+            for idx, mask in enumerate(y_pred.data.cpu().numpy()):
+                x, y = xy_batch[idx // n_rot]
+                i = idx % n_rot
+                if i:
+                    mask = utils.rotated(mask, -i * 90)
+                pred_mask[:, x: x + s, y: y + s] += mask / n_rot
         return pred_mask
 
 
@@ -438,7 +448,7 @@ def main():
             p.unlink()
 
     if args.hps == 'load':
-        hps = HyperParams(**json.loads(logdir.joinpath('hps.json').read_text()))
+        hps = HyperParams.from_dir(logdir)
     else:
         hps = HyperParams()
         hps.update(args.hps)
