@@ -395,23 +395,33 @@ class Model:
     def _model_path(self, logdir: Path, n_epoch: int) -> Path:
         return logdir.joinpath('model-{}'.format(n_epoch))
 
-    def predict_image_mask(self, im_data: np.ndarray, rotate: bool=False
-                           ) -> np.ndarray:
+    def predict_image_mask(self, im_data: np.ndarray,
+                           rotate: bool=False) -> np.ndarray:
         self.net.eval()
-        # FIXME - some copy-paste
-        w, h = im_data.shape[1:]
+        c, w, h = im_data.shape
         b = self.hps.patch_border
         s = self.hps.patch_inner
-        xs = range(b, w - (b + s), s)
-        ys = range(b, h - (b + s), s)
+        padded = np.zeros([c, w + 2 * b, h + 2 * b], dtype=im_data.dtype)
+        padded[:, b:-b, b:-b] = im_data
+        # mirror on the edges
+        padded[:, :b, b:-b] = np.flip(im_data[:, :b, :], 1)
+        padded[:, -b:, b:-b] = np.flip(im_data[:, -b:, :], 1)
+        padded[:, :, :b] = np.flip(padded[:, :, b: 2 * b], 2)
+        padded[:, :, -b:] = np.flip(padded[:, :, -2 * b: -b], 2)
+        # TODO - check if more predictions (step = s // 2) improve jaccard
+        xs = list(range(0, w - s, s)) + [w - s]
+        ys = list(range(0, h - s, s)) + [h - s]
         all_xy = [(x, y) for x in xs for y in ys]
-        pred_mask = np.zeros([self.hps.n_classes, w, h], dtype=np.float32)
+        out_shape = [self.hps.n_classes, w, h]
+        pred_mask = np.zeros(out_shape, dtype=np.float32)
+        pred_per_pixel = np.zeros(out_shape, dtype=np.int16)
         n_rot = 4 if rotate else 1
         for xy_batch in tqdm.tqdm(
                 list(utils.chunks(all_xy, self.hps.batch_size // (2 * n_rot)))):
             inputs = []
             for x, y in xy_batch:
-                patch = im_data[:, x - b: x + s + b, y - b: y + s + b]
+                # shifted by -b to account for padding
+                patch = padded[:, x: x + s + 2 * b, y: y + s + 2 * b]
                 inputs.append(patch)
                 for i in range(1, n_rot):
                     inputs.append(utils.rotated(patch, i * 90))
@@ -423,6 +433,8 @@ class Model:
                 if i:
                     mask = utils.rotated(mask, -i * 90)
                 pred_mask[:, x: x + s, y: y + s] += mask / n_rot
+                pred_per_pixel[:, x: x + s, y: y + s] += 1
+        pred_mask /= pred_per_pixel
         return pred_mask
 
 
