@@ -26,7 +26,6 @@ def main():
     arg = parser.add_argument
     arg('logdir', type=Path, help='Path to log directory')
     arg('output', type=str, help='Submission csv')
-    arg('--train-only', action='store_true', help='Predict only train images')
     arg('--only', help='Only predict these image ids (comma-separated)')
     arg('--threshold', type=float, default=0.5)
     arg('--epsilon', type=float, default=2.0, help='smoothing')
@@ -36,8 +35,10 @@ def main():
     arg('--model-path', type=Path,
         help='Path to a specific model (if the last is not desired)')
     arg('--processes', type=int, default=30)
-    arg('--debug', action='store_true', help='save masks and polygons as png')
-    arg('--fix', nargs='+')
+    arg('--debug', action='store_true',
+        help='only train images, check jaccard, save masks and polygons as png')
+    arg('--fix', nargs='+', help='{im_id}_{poly_type} format, e.g 6100_1_1_10')
+    arg('--force-predict', action='store_true')
     args = parser.parse_args()
     to_fix = set(args.fix or [])
     hps = HyperParams(**json.loads(
@@ -53,13 +54,15 @@ def main():
 
     train_ids = set(utils.get_wkt_data())
     to_predict = set(train_ids)
-    if not args.train_only:
+    if not args.debug:
         to_predict |= set(only or image_ids)
-    to_predict = [im_id for im_id in to_predict
-                  if not mask_path(store, im_id).exists()]
+    if not args.force_predict:
+        to_predict = [im_id for im_id in to_predict
+                      if not mask_path(store, im_id).exists()]
 
     if to_predict:
-        predict_masks(args, hps, store, to_predict, args.threshold)
+        predict_masks(args, hps, store, to_predict, args.threshold,
+                      debug=args.debug)
     if args.masks_only:
         logger.info('Was building masks only, done.')
         return
@@ -69,7 +72,7 @@ def main():
     with opener(args.output, 'wt') as f:
         writer = csv.writer(f)
         writer.writerow(header)
-        to_output = train_ids if args.train_only else (only or image_ids)
+        to_output = train_ids if args.debug else (only or image_ids)
         jaccard_stats = [[] for _ in hps.classes]
         sizes = [0 for _ in hps.classes]
         with Pool(processes=args.processes) as pool:
@@ -81,7 +84,6 @@ def main():
                             min_area=args.min_area,
                             min_car_area=args.min_car_area,
                             debug=args.debug,
-                            train_only=args.train_only,
                             to_fix=to_fix,
                             hps=hps,
                             ),
@@ -92,7 +94,7 @@ def main():
                     cls_jss.append(cls_js)
                 for idx, (_, _, poly) in enumerate(rows):
                     sizes[idx] += len(poly)
-        if args.train_only and args.debug:
+        if args.debug:
             pixel_jaccards, poly_jaccards = [], []
             for cls, cls_js in zip(hps.classes, jaccard_stats):
                 pixel_jc, poly_jc = [np.array([0, 0, 0]) for _ in range(2)]
@@ -115,7 +117,8 @@ def mask_path(store: Path, im_id: str) -> Path:
     return store.joinpath('{}.bin-mask.gz'.format(im_id))
 
 
-def predict_masks(args, hps, store, to_predict: List[str], threshold: float):
+def predict_masks(args, hps, store, to_predict: List[str], threshold: float,
+                  debug: bool=False):
     logger.info('Predicting {} masks: {}'
                 .format(len(to_predict), ', '.join(sorted(to_predict))))
     model = Model(hps=hps)
@@ -125,8 +128,10 @@ def predict_masks(args, hps, store, to_predict: List[str], threshold: float):
         model.restore_last_snapshot(args.logdir)
 
     def load_im(im_id):
-        return Image(id=im_id,
-                     data=model.preprocess_image(utils.load_image(im_id)))
+        data = model.preprocess_image(utils.load_image(im_id))
+        if debug:
+            data = square(data, hps)
+        return Image(id=im_id, data=data)
 
     def predict_mask(im):
         logger.info(im.id)
@@ -150,7 +155,6 @@ def get_poly_data(im_id, *,
                   min_area: float,
                   min_car_area: float,
                   debug: bool,
-                  train_only: bool,
                   to_fix: Set[str],
                   hps: HyperParams
                   ):
@@ -162,33 +166,39 @@ def get_poly_data(im_id, *,
         with gzip.open(str(path), 'rb') as f:
             masks = np.load(f)  # type: np.ndarray
         rows = []
+        if debug:
+            im_data = utils.load_image(im_id, rgb_only=True)
+            im_size = im_data.shape[:2]
+            cv2.imwrite(str(store / '{}_image.png'.format(im_id)),
+                        255 * utils.scale_percentile(square(im_data, hps)))
         for cls, mask in zip(classes, masks):
             poly_type = cls + 1
-            if train_only or not train_polygons:
+            if train_polygons and not debug:
+                rows.append((im_id, str(poly_type), 'MULTIPOLYGON EMPTY'))
+            else:
                 unscaled, pred_poly = get_polygons(
                     im_id, mask, epsilon,
                     min_area=min_car_area if cls in {8, 9} else min_area,
                     fix='{}_{}'.format(im_id, poly_type) in to_fix,
                 )
-                if debug:
-                    poly_mask = utils.mask_for_polygons(mask.shape, unscaled)
-                    cv2.imwrite(
-                        str(store / '{}_{}_poly_mask.png'.format(im_id, cls)),
-                        255 * poly_mask)
-                    cv2.imwrite(
-                        str(store / '{}_{}_pixel_mask.png'.format(im_id, cls)),
-                        255 * mask)
                 rows.append(
                     (im_id, str(poly_type),
                      shapely.wkt.dumps(pred_poly, rounding_precision=8)))
-            elif train_polygons:
-                rows.append((im_id, str(poly_type), 'MULTIPOLYGON EMPTY'))
-            else:
-                assert False
-            if train_only and train_polygons and debug:
-                train_poly = train_polygons[poly_type]
-                jaccard_stats.append(
-                    log_jaccard(im_id, train_poly, mask, poly_mask, hps))
+                if debug:
+                    poly_mask = utils.mask_for_polygons(mask.shape, unscaled)
+                    train_poly = shapely.wkt.loads(train_polygons[poly_type])
+                    scaled_train_poly = utils.scale_to_mask(
+                        im_id, im_size, train_poly)
+                    true_mask = square(utils.mask_for_polygons(
+                        im_size, scaled_train_poly), hps)
+                    write_mask = lambda m, name: cv2.imwrite(
+                        str(store / '{}_{}_{}.png'.format(im_id, cls, name)),
+                        255 * m)
+                    write_mask(true_mask, 'true_mask')
+                    write_mask(mask, 'pixel_mask')
+                    write_mask(poly_mask, 'poly_mask')
+                    jaccard_stats.append(
+                        log_jaccard(true_mask, mask, poly_mask))
     else:
         logger.info('{} empty'.format(im_id))
         rows = [(im_id, str(cls + 1), 'MULTIPOLYGON EMPTY') for cls in classes]
@@ -199,25 +209,25 @@ def get_polygons(im_id: str, mask: np.ndarray,
                  epsilon: float, min_area: float, fix: bool
                  ) -> Tuple[MultiPolygon, MultiPolygon]:
     assert len(mask.shape) == 2
+    polygons = utils.mask_to_polygons(
+        mask, epsilon=epsilon, min_area=min_area, fix=fix)
     x_scaler, y_scaler = utils.get_scalers(im_id, im_size=mask.shape)
     x_scaler = 1 / x_scaler
     y_scaler = 1 / y_scaler
-    polygons = utils.mask_to_polygons(
-        mask, epsilon=epsilon, min_area=min_area, fix=fix)
     return polygons, shapely.affinity.scale(
         polygons, xfact=x_scaler, yfact=y_scaler, origin=(0, 0, 0))
 
 
-def log_jaccard(im_id, train_poly, mask, poly_mask, hps):
-    im_size = mask.shape
-    train_poly = shapely.wkt.loads(train_poly)
-    scaled_train_poly = utils.scale_to_mask(im_id, im_size, train_poly)
-    true_mask = utils.mask_for_polygons(im_size, scaled_train_poly)
+def square(x, hps):
+    if len(x.shape) == 2 or x.shape[2] <= 20:
+        return x[:hps.validation_square, :hps.validation_square]
+    else:
+        assert x.shape[0] <= 20
+        return x[:, :hps.validation_square, :hps.validation_square]
+
+
+def log_jaccard(true_mask, mask, poly_mask):
     assert len(mask.shape) == 2
-    square = lambda x: x[:hps.validation_square, :hps.validation_square]
-    mask = square(mask)
-    poly_mask = square(poly_mask)
-    true_mask = square(true_mask)
     pixel_jc = utils.mask_tp_fp_fn(mask, true_mask, 0.5)
     poly_jc = utils.mask_tp_fp_fn(poly_mask, true_mask, 0.5)
     logger.info('pixel jaccard: {:.5f}, polygon jaccard: {:.5f}'
