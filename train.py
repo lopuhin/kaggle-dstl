@@ -408,9 +408,9 @@ class Model:
         padded[:, -b:, b:-b] = np.flip(im_data[:, -b:, :], 1)
         padded[:, :, :b] = np.flip(padded[:, :, b: 2 * b], 2)
         padded[:, :, -b:] = np.flip(padded[:, :, -2 * b: -b], 2)
-        # TODO - check if more predictions (step = s // 2) improve jaccard
-        xs = list(range(0, w - s, s)) + [w - s]
-        ys = list(range(0, h - s, s)) + [h - s]
+        step = s  # TODO: // 3
+        xs = list(range(0, w - s, step)) + [w - s]
+        ys = list(range(0, h - s, step)) + [h - s]
         all_xy = [(x, y) for x in xs for y in ys]
         out_shape = [self.hps.n_classes, w, h]
         pred_mask = np.zeros(out_shape, dtype=np.float32)
