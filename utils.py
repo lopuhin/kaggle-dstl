@@ -49,59 +49,56 @@ def load_image(im_id: str, rgb_only=False, align=True) -> np.ndarray:
     im_p = np.expand_dims(tiff.imread('sixteen_band/{}_P.tif'.format(im_id)), 2)
     im_m = tiff.imread('sixteen_band/{}_M.tif'.format(im_id)).transpose([1, 2, 0])
     im_a = tiff.imread('sixteen_band/{}_A.tif'.format(im_id)).transpose([1, 2, 0])
-    h, w = im_rgb.shape[:2]
+    w, h = im_rgb.shape[:2]
     if align:
         logger.info('Getting alignment')
-        im_p = _aligned(im_rgb, im_p)
-        im_m = _aligned(im_rgb, im_m)
-        im_a = _aligned(im_rgb, im_a)
+        im_p, _ = _aligned(im_rgb, im_p)
+        im_m, aligned = _aligned(im_rgb, im_m, im_m[:, :, :3])
+        im_ref = im_m[:, :, -1] if aligned else im_rgb[:, :, 0]
+        im_a, _ = _aligned(im_ref, im_a, im_a[:, :, 0])
     if im_p.shape != im_rgb.shape[:2]:
-        im_p = cv2.resize(im_p, (w, h), interpolation=cv2.INTER_CUBIC)
+        im_p = cv2.resize(im_p, (h, w), interpolation=cv2.INTER_CUBIC)
     im_p = np.expand_dims(im_p, 2)
-    im_m = cv2.resize(im_m, (w, h), interpolation=cv2.INTER_CUBIC)
-    im_a = cv2.resize(im_a, (w, h), interpolation=cv2.INTER_CUBIC)
+    im_m = cv2.resize(im_m, (h, w), interpolation=cv2.INTER_CUBIC)
+    im_a = cv2.resize(im_a, (h, w), interpolation=cv2.INTER_CUBIC)
     return np.concatenate([im_rgb, im_p, im_m, im_a], axis=2)
 
 
 def _preprocess_for_alignment(im):
-    im = im.astype(np.float32)
-    im = np.mean(im, 2)
-    return _get_gradient(im)
+    im = np.squeeze(im)
+    if len(im.shape) == 2:
+        im = scale_percentile(np.expand_dims(im, 2))
+    else:
+        assert im.shape[2] == 3, im.shape
+        im = cv2.cvtColor(im, cv2.COLOR_BGR2GRAY)
+    return im.astype(np.float32)
 
 
-def _get_gradient(im):
-    # Calculate the x and y gradients using Sobel operator
-    grad_x = cv2.Sobel(im, cv2.CV_32F, 1, 0, ksize=3)
-    grad_y = cv2.Sobel(im, cv2.CV_32F, 0, 1, ksize=3)
-    # Combine the two gradients
-    grad = cv2.addWeighted(
-        np.absolute(grad_x), 0.5, np.absolute(grad_y), 0.5, 0)
-    return grad
-
-
-def _aligned(im_ref, im):
+def _aligned(im_ref, im, im_to_align=None):
     w, h = im.shape[:2]
-    im_ref = cv2.resize(im_ref, (w, h), interpolation=cv2.INTER_CUBIC)
+    im_ref = cv2.resize(im_ref, (h, w), interpolation=cv2.INTER_CUBIC)
     im_ref = _preprocess_for_alignment(im_ref)
-    im_gray = _preprocess_for_alignment(im)
+    if im_to_align is None:
+        im_to_align = im
+    im_to_align = _preprocess_for_alignment(im_to_align)
+    assert im_ref.shape[:2] == im_to_align.shape[:2]
     try:
-        warp_mode = cv2.MOTION_EUCLIDEAN
+        warp_mode = cv2.MOTION_TRANSLATION
         warp_matrix = np.eye(2, 3, dtype=np.float32)
         criteria = (
-            cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 1000,  1e-7)
-        _, warp_matrix = cv2.findTransformECC(
-            im_ref, im_gray, warp_matrix, warp_mode, criteria)
+            cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 5000,  1e-8)
+        cc, warp_matrix = cv2.findTransformECC(
+            im_ref, im_to_align, warp_matrix, warp_mode, criteria)
     except cv2.error as e:
         logger.info('Error getting alignment: {}'.format(e))
-        return im
+        return im, False
     else:
-        logger.info('Got alignment: {}'
-                    .format(str(warp_matrix).replace('\n', '')))
-        im = cv2.warpAffine(
-            im, warp_matrix, (im.shape[1], im.shape[0]),
-            flags=cv2.INTER_LINEAR + cv2.WARP_INVERSE_MAP)
+        logger.info('Got alignment with cc {}: {}'
+              .format(cc, str(warp_matrix).replace('\n', '')))
+        im = cv2.warpAffine(im, warp_matrix, (h, w),
+                            flags=cv2.INTER_LINEAR + cv2.WARP_INVERSE_MAP)
         im[im == 0] = np.mean(im)
-        return im
+        return im, True
 
 
 def load_polygons(im_id: str, im_size: Tuple[int, int])\
@@ -173,16 +170,12 @@ def scale_percentile(matrix: np.ndarray) -> np.ndarray:
     """ Fixes the pixel value range to 2%-98% original distribution of values.
     """
     w, h, d = matrix.shape
-    matrix = np.reshape(matrix, [w * h, d]).astype(np.float64)
-
+    matrix = matrix.reshape([w * h, d])
     # Get 2nd and 98th percentile
     mins = np.percentile(matrix, 1, axis=0)
     maxs = np.percentile(matrix, 99, axis=0) - mins
-
     matrix = (matrix - mins[None, :]) / maxs[None, :]
-    matrix = np.reshape(matrix, [w, h, d])
-    matrix = matrix.clip(0, 1)
-    return matrix
+    return matrix.reshape([w, h, d]).clip(0, 1)
 
 
 def chunks(lst, n):
