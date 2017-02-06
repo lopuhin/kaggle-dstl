@@ -416,8 +416,8 @@ class Model:
         pred_mask = np.zeros(out_shape, dtype=np.float32)
         pred_per_pixel = np.zeros(out_shape, dtype=np.int16)
         n_rot = 4 if rotate else 1
-        for xy_batch in tqdm.tqdm(
-                list(utils.chunks(all_xy, self.hps.batch_size // (2 * n_rot)))):
+
+        def gen_batch(xy_batch):
             inputs = []
             for x, y in xy_batch:
                 # shifted by -b to account for padding
@@ -425,7 +425,12 @@ class Model:
                 inputs.append(patch)
                 for i in range(1, n_rot):
                     inputs.append(utils.rotated(patch, i * 90))
-            inputs = np.array(inputs, dtype=np.float32)
+            return xy_batch, np.array(inputs, dtype=np.float32)
+
+        for xy_batch, inputs in utils.imap_fixed_output_buffer(
+                gen_batch, tqdm.tqdm(list(
+                    utils.chunks(all_xy, self.hps.batch_size // (2 * n_rot)))),
+                threads=2):
             y_pred = self.net(self._var(torch.from_numpy(inputs)))
             for idx, mask in enumerate(y_pred.data.cpu().numpy()):
                 x, y = xy_batch[idx // n_rot]
@@ -434,6 +439,7 @@ class Model:
                     mask = utils.rotated(mask, -i * 90)
                 pred_mask[:, x: x + s, y: y + s] += mask / n_rot
                 pred_per_pixel[:, x: x + s, y: y + s] += 1
+        assert pred_per_pixel.min() >= 1
         pred_mask /= pred_per_pixel
         return pred_mask
 
