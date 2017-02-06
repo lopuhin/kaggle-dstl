@@ -329,11 +329,29 @@ class Model:
         border[-b, -b, :] = 1
         for i, (x, y, p) in enumerate(zip(xs, ys, pred_ys)):
             fname = lambda s: str(self.logdir / ('{:0>3}_{}.png'.format(i, s)))
-            rgb = utils.scale_percentile(x[:3].transpose(1, 2, 0))
-            cv2.imwrite(fname('x'), np.maximum(border, rgb) * 255)
+            x = utils.scale_percentile(x.transpose(1, 2, 0))
+            channels = [x[:, :, :3]]  # RGB
+            if x.shape[-1] == 20:
+                channels.extend([
+                    x[:, :, 3:4],    # P
+                    x[:, :, 4:7],    # M
+                    x[:, :, 6:9],    # M (overlap)
+                    x[:, :, 9:12],   # M
+                    x[:, :, 12:15],  # A (overlap)
+                    x[:, :, 14:17],  # A
+                    x[:, :, 17:],    # A
+                ])
+            channels = [np.maximum(border, ch) for ch in channels]
+            if len(channels) == 8:
+                img = np.concatenate(
+                    [np.concatenate(channels[:4], 1),
+                     np.concatenate(channels[4:], 1)], 0)
+            else:
+                img = np.concatenate(channels, axis=1)
+            cv2.imwrite(fname('-x'), img * 255)
             for cls, c_y, c_p in zip(self.hps.classes, y, p):
-                cv2.imwrite(fname('{}_y'.format(cls)), c_y * 255)
-                cv2.imwrite(fname('{}_z'.format(cls)), c_p * 255)
+                cv2.imwrite(fname('{}-y'.format(cls)), c_y * 255)
+                cv2.imwrite(fname('{}-z'.format(cls)), c_p * 255)
 
     def _log_value(self, name, value):
         self.tb_logger.log_value(name, value, step=self.net.global_step[0])
