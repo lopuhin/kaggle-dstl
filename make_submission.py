@@ -165,6 +165,8 @@ def get_poly_data(im_id, *,
         logger.info(im_id)
         with gzip.open(str(path), 'rb') as f:
             masks = np.load(f)  # type: np.ndarray
+            if debug:
+                masks = square(masks, hps)
         rows = []
         if debug:
             im_data = utils.load_image(im_id, rgb_only=True)
