@@ -42,53 +42,66 @@ def get_wkt_data() -> Dict[str, Dict[int, str]]:
     return _wkt_data
 
 
-def load_image(im_id: str, rgb_only=False, align=False) -> np.ndarray:
+def load_image(im_id: str, rgb_only=False, align=True) -> np.ndarray:
     im_rgb = tiff.imread('./three_band/{}.tif'.format(im_id)).transpose([1, 2, 0])
     if rgb_only:
         return im_rgb
-    im_p = tiff.imread('sixteen_band/{}_P.tif'.format(im_id))
+    im_p = np.expand_dims(tiff.imread('sixteen_band/{}_P.tif'.format(im_id)), 2)
     im_m = tiff.imread('sixteen_band/{}_M.tif'.format(im_id)).transpose([1, 2, 0])
     im_a = tiff.imread('sixteen_band/{}_A.tif'.format(im_id)).transpose([1, 2, 0])
     h, w = im_rgb.shape[:2]
+    if align:
+        logger.info('Getting alignment')
+        # im_p = _aligned(im_rgb, im_p)
+        im_m = _aligned(im_rgb, im_m)
+        im_a = _aligned(im_rgb, im_a)
     if im_p.shape != im_rgb.shape[:2]:
         im_p = cv2.resize(im_p, (w, h), interpolation=cv2.INTER_CUBIC)
     im_p = np.expand_dims(im_p, 2)
     im_m = cv2.resize(im_m, (w, h), interpolation=cv2.INTER_CUBIC)
     im_a = cv2.resize(im_a, (w, h), interpolation=cv2.INTER_CUBIC)
-    if align:
-        logger.info('Getting alignment')
-        try:
-            warp_matrix = _get_alignment(im_rgb, im_p)
-        except cv2.error as e:
-            logger.info('Error getting alignment: {}'.format(e))
-        else:
-            logger.info('Got alignment: {}'
-                        .format(str(warp_matrix).replace('\n', '')))
-            im_p = np.expand_dims(_apply_alignment(im_p, warp_matrix), 2)
-            # FIXME - other images might also be mis-aligned,
-            # but they have lower resolution, so should be less important
-            im_m = _apply_alignment(im_m, warp_matrix)
-            im_a = _apply_alignment(im_a, warp_matrix)
     return np.concatenate([im_rgb, im_p, im_m, im_a], axis=2)
 
 
-def _get_alignment(im_rgb, im_p):
-    patch_rgb = im_rgb[300:1900, 300:2200, 1].astype(np.float32)
-    patch_p = im_p[300:1900, 300:2200, 0].astype(np.float32)
-    warp_mode = cv2.MOTION_EUCLIDEAN
-    warp_matrix = np.eye(2, 3, dtype=np.float32)
-    criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 1000,  1e-7)
-    _, warp_matrix = cv2.findTransformECC(
-        patch_rgb, patch_p, warp_matrix, warp_mode, criteria)
-    return warp_matrix
+def _preprocess_for_alignment(im):
+    im = im.astype(np.float32)
+    im = np.mean(im, 2)
+    return _get_gradient(im)
 
 
-def _apply_alignment(im, warp_matrix):
-    im = cv2.warpAffine(
-        im, warp_matrix, (im.shape[1], im.shape[0]),
-        flags=cv2.INTER_LINEAR + cv2.WARP_INVERSE_MAP)
-    im[im == 0] = np.mean(im)
-    return im
+def _get_gradient(im):
+    # Calculate the x and y gradients using Sobel operator
+    grad_x = cv2.Sobel(im, cv2.CV_32F, 1, 0, ksize=3)
+    grad_y = cv2.Sobel(im, cv2.CV_32F, 0, 1, ksize=3)
+    # Combine the two gradients
+    grad = cv2.addWeighted(
+        np.absolute(grad_x), 0.5, np.absolute(grad_y), 0.5, 0)
+    return grad
+
+
+def _aligned(im_ref, im):
+    w, h = im.shape[:2]
+    im_ref = cv2.resize(im_ref, (w, h), interpolation=cv2.INTER_CUBIC)
+    im_ref = _preprocess_for_alignment(im_ref)
+    im_gray = _preprocess_for_alignment(im)
+    try:
+        warp_mode = cv2.MOTION_EUCLIDEAN
+        warp_matrix = np.eye(2, 3, dtype=np.float32)
+        criteria = (
+            cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 1000,  1e-7)
+        _, warp_matrix = cv2.findTransformECC(
+            im_ref, im_gray, warp_matrix, warp_mode, criteria)
+    except cv2.error as e:
+        logger.info('Error getting alignment: {}'.format(e))
+        return im
+    else:
+        logger.info('Got alignment: {}'
+                    .format(str(warp_matrix).replace('\n', '')))
+        im = cv2.warpAffine(
+            im, warp_matrix, (im.shape[1], im.shape[0]),
+            flags=cv2.INTER_LINEAR + cv2.WARP_INVERSE_MAP)
+        im[im == 0] = np.mean(im)
+        return im
 
 
 def load_polygons(im_id: str, im_size: Tuple[int, int])\
