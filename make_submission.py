@@ -53,7 +53,7 @@ def main():
     store = args.logdir  # type: Path
 
     train_ids = set(utils.get_wkt_data())
-    to_predict = set(train_ids)
+    to_predict = set(only or train_ids)
     if not args.debug:
         to_predict |= set(only or image_ids)
     if not args.force_predict:
