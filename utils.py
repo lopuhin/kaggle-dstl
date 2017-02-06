@@ -52,7 +52,7 @@ def load_image(im_id: str, rgb_only=False, align=True) -> np.ndarray:
     h, w = im_rgb.shape[:2]
     if align:
         logger.info('Getting alignment')
-        # im_p = _aligned(im_rgb, im_p)
+        im_p = _aligned(im_rgb, im_p)
         im_m = _aligned(im_rgb, im_m)
         im_a = _aligned(im_rgb, im_a)
     if im_p.shape != im_rgb.shape[:2]:
