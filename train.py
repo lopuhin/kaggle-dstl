@@ -3,7 +3,6 @@ import argparse
 import json
 from functools import partial
 from pathlib import Path
-from multiprocessing.pool import ThreadPool
 from pprint import pprint
 import random
 import time
@@ -12,7 +11,7 @@ from typing import List
 import attr
 import cv2
 import numpy as np
-from sklearn.model_selection import GroupShuffleSplit
+from sklearn.model_selection import ShuffleSplit
 import tensorboard_logger
 import torch
 from torch.autograd import Variable
@@ -495,9 +494,6 @@ def main():
     model = Model(hps=hps)
     all_im_ids = list(utils.get_wkt_data())
     valid_ids = []
-    bad_pairs = [('6110', '6140'),
-                 ('6020', '6130'),
-                 ('6030', '6150')]
     if args.only:
         train_ids = args.only.split(',')
     elif args.all:
@@ -516,23 +512,11 @@ def main():
             np.mean([area_by_id[im_id] for im_id in valid_ids])))
         logger.info('Valid area mean: {}'.format(
             np.mean([area_by_id[im_id] for im_id in train_ids])))
-        # TODO - recover
-        for a, b in bad_pairs:
-            if a in valid_ids and b in valid_ids:
-                assert False
-            if a in train_ids and b in train_ids:
-                assert False
     elif args.validation == 'square':
         train_ids = valid_ids = all_im_ids
     elif args.validation == 'random':
-        # Fix for images of the same place in different seasons
-        labels = []
-        for im_id in all_im_ids:
-            for pair in bad_pairs:
-                im_id = im_id.replace(*pair)
-            labels.append(im_id)
         train_ids, valid_ids = [[all_im_ids[idx] for idx in g] for g in next(
-            GroupShuffleSplit(random_state=1).split(all_im_ids, groups=labels))]
+            ShuffleSplit(random_state=1).split(all_im_ids))]
         logger.info('Train: {}'.format(' '.join(sorted(train_ids))))
         logger.info('Valid: {}'.format(' '.join(sorted(valid_ids))))
     else:
