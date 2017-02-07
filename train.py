@@ -389,6 +389,8 @@ class Model:
             losses.mean(), self._format_jaccard(jaccard_stats)))
         for cls, cls_losses in zip(self.hps.classes, losses):
             self._log_value('valid-loss/cls-{}'.format(cls), cls_losses.mean())
+        if self.hps.has_all_classes:
+            self._log_value('valid-loss/cls-mean', losses.mean())
         self._log_jaccard(jaccard_stats, prefix='valid-')
 
     def restore_last_snapshot(self, logdir: Path) -> int:
