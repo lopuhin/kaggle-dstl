@@ -164,7 +164,11 @@ def get_poly_data(im_id, *,
     if path.exists():
         logger.info(im_id)
         with gzip.open(str(path), 'rb') as f:
-            masks = np.load(f)  # type: np.ndarray
+            try:
+                masks = np.load(f)  # type: np.ndarray
+            except Exception:
+                logger.error('Error loading mask {}'.format(path))
+                raise
             if debug:
                 masks = square(masks, hps)
         rows = []
