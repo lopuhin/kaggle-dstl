@@ -333,10 +333,10 @@ class Model:
             channels = [x[:, :, :3]]  # RGB
             if x.shape[-1] == 20:
                 channels.extend([
-                    x[:, :, 3:4],    # P
                     x[:, :, 4:7],    # M
                     x[:, :, 6:9],    # M (overlap)
                     x[:, :, 9:12],   # M
+                    x[:, :, 3:4],    # P (will be shown below RGB)
                     x[:, :, 12:15],  # A (overlap)
                     x[:, :, 14:17],  # A
                     x[:, :, 17:],    # A
