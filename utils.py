@@ -4,6 +4,8 @@ from concurrent.futures import ThreadPoolExecutor
 from itertools import islice
 import logging
 import json
+from pathlib import Path
+import pickle
 from typing import Dict, Tuple
 import sys
 
@@ -42,7 +44,7 @@ def get_wkt_data() -> Dict[str, Dict[int, str]]:
     return _wkt_data
 
 
-def load_image(im_id: str, rgb_only=False, align=True) -> np.ndarray:
+def load_image(im_id: str, rgb_only=False, align=False) -> np.ndarray:
     im_rgb = tiff.imread('./three_band/{}.tif'.format(im_id)).transpose([1, 2, 0])
     if rgb_only:
         return im_rgb
@@ -52,10 +54,11 @@ def load_image(im_id: str, rgb_only=False, align=True) -> np.ndarray:
     w, h = im_rgb.shape[:2]
     if align:
         logger.info('Getting alignment')
-        im_p, _ = _aligned(im_rgb, im_p)
-        im_m, aligned = _aligned(im_rgb, im_m, im_m[:, :, :3])
+        key = lambda x: '{}_{}'.format(im_id, x)
+        im_p, _ = _aligned(im_rgb, im_p, key=key('p'))
+        im_m, aligned = _aligned(im_rgb, im_m, im_m[:, :, :3], key=key('m'))
         im_ref = im_m[:, :, -1] if aligned else im_rgb[:, :, 0]
-        im_a, _ = _aligned(im_ref, im_a, im_a[:, :, 0])
+        im_a, _ = _aligned(im_ref, im_a, im_a[:, :, 0], key=key('a'))
     if im_p.shape != im_rgb.shape[:2]:
         im_p = cv2.resize(im_p, (h, w), interpolation=cv2.INTER_CUBIC)
     im_p = np.expand_dims(im_p, 2)
@@ -74,7 +77,7 @@ def _preprocess_for_alignment(im):
     return im.astype(np.float32)
 
 
-def _aligned(im_ref, im, im_to_align=None):
+def _aligned(im_ref, im, im_to_align=None, key=None):
     w, h = im.shape[:2]
     im_ref = cv2.resize(im_ref, (h, w), interpolation=cv2.INTER_CUBIC)
     im_ref = _preprocess_for_alignment(im_ref)
@@ -89,6 +92,11 @@ def _aligned(im_ref, im, im_to_align=None):
             cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 5000,  1e-8)
         cc, warp_matrix = cv2.findTransformECC(
             im_ref, im_to_align, warp_matrix, warp_mode, criteria)
+        if key is not None:
+            # TODO - load from key
+            with Path('align_cache').joinpath('{}.alignment'.format(key))\
+                    .open('wb') as f:
+                pickle.dump((cc, warp_matrix), f)
     except cv2.error as e:
         logger.info('Error getting alignment: {}'.format(e))
         return im, False
