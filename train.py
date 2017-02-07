@@ -493,34 +493,40 @@ def main():
 
     model = Model(hps=hps)
     all_im_ids = list(utils.get_wkt_data())
+    mask_stats = utils.load_mask_stats()
+    im_area = [(im_id, np.mean([mask_stats[im_id][str(cls)]['area']
+                                for cls in hps.classes]))
+               for im_id in all_im_ids]
+    area_by_id = dict(im_area)
     valid_ids = []
+
     if args.only:
         train_ids = args.only.split(',')
     elif args.all:
         train_ids = all_im_ids
     elif args.validation == 'stratified':
-        mask_stats = utils.load_mask_stats()
-        im_area = [(im_id, np.mean([mask_stats[im_id][str(cls)]['area']
-                                    for cls in hps.classes]))
-                   for im_id in all_im_ids]
-        im_area.sort(key=lambda x: (x[1], x[0]), reverse=True)
         train_ids, valid_ids = [], []
-        for idx, (im_id, _) in enumerate(im_area):
+        for idx, (im_id, _) in enumerate(
+                sorted(im_area, key=lambda x: (x[1], x[0]), reverse=True)):
             (valid_ids if (idx % 4 == 1) else train_ids).append(im_id)
-        area_by_id = dict(im_area)
-        logger.info('Train area mean: {}'.format(
-            np.mean([area_by_id[im_id] for im_id in valid_ids])))
-        logger.info('Valid area mean: {}'.format(
-            np.mean([area_by_id[im_id] for im_id in train_ids])))
     elif args.validation == 'square':
         train_ids = valid_ids = all_im_ids
     elif args.validation == 'random':
-        train_ids, valid_ids = [[all_im_ids[idx] for idx in g] for g in next(
-            ShuffleSplit(random_state=1).split(all_im_ids))]
-        logger.info('Train: {}'.format(' '.join(sorted(train_ids))))
-        logger.info('Valid: {}'.format(' '.join(sorted(valid_ids))))
+        forced_train_ids = {'6070_2_3', '6120_2_2', '6110_4_0'}
+        other_ids = list(set(all_im_ids) - forced_train_ids)
+        train_ids, valid_ids = [[other_ids[idx] for idx in g] for g in next(
+            ShuffleSplit(random_state=1, n_splits=4).split(other_ids))]
+        train_ids.extend(forced_train_ids)
     else:
         raise ValueError('Unexpected validation kind: {}'.format(args.validation))
+
+    logger.info('Train: {}'.format(' '.join(sorted(train_ids))))
+    logger.info('Valid: {}'.format(' '.join(sorted(valid_ids))))
+    logger.info('Train area mean: {}'.format(
+        np.mean([area_by_id[im_id] for im_id in valid_ids])))
+    logger.info('Valid area mean: {}'.format(
+        np.mean([area_by_id[im_id] for im_id in train_ids])))
+
     model.train(logdir=logdir,
                 train_ids=train_ids,
                 valid_ids=valid_ids,
