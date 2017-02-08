@@ -192,7 +192,7 @@ class UNet(BaseNet):
         super().__init__(hps)
         self.pool = nn.MaxPool2d(2, 2)
         b = hps.filters_base
-        self.filters = [b * 2, b * 2, b * 4, b * 8, b * 16]
+        self.filters = [b, b * 2, b * 4, b * 8, b * 16]
         self.down, self.up = [], []
         for i, nf in enumerate(self.filters):
             low_nf = hps.n_channels if i == 0 else self.filters[i - 1]

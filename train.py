@@ -495,7 +495,7 @@ def main():
 
     model = Model(hps=hps)
     all_im_ids = list(utils.get_wkt_data())
-    mask_stats = utils.load_mask_stats()
+    mask_stats = json.loads(Path('cls-stats.json').read_text())
     im_area = [(im_id, np.mean([mask_stats[im_id][str(cls)]['area']
                                 for cls in hps.classes]))
                for im_id in all_im_ids]

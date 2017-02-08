@@ -237,11 +237,6 @@ def mask_to_polygons(mask: np.ndarray, epsilon=5., min_area=10.,
     return all_polygons
 
 
-def load_mask_stats():
-    with open('images/stats.json') as f:
-        return json.load(f)
-
-
 def mask_tp_fp_fn(pred_mask: np.ndarray, true_mask: np.ndarray,
                   threshold: float) -> Tuple[int, int, int]:
     pred_mask = pred_mask >= threshold
