@@ -53,7 +53,6 @@ def load_image(im_id: str, rgb_only=False, align=False) -> np.ndarray:
     im_a = tiff.imread('sixteen_band/{}_A.tif'.format(im_id)).transpose([1, 2, 0])
     w, h = im_rgb.shape[:2]
     if align:
-        logger.info('Getting alignment')
         key = lambda x: '{}_{}'.format(im_id, x)
         im_p, _ = _aligned(im_rgb, im_p, key=key('p'))
         im_m, aligned = _aligned(im_rgb, im_m, im_m[:, :, :3], key=key('m'))
@@ -86,27 +85,36 @@ def _aligned(im_ref, im, im_to_align=None, key=None):
     im_to_align = _preprocess_for_alignment(im_to_align)
     assert im_ref.shape[:2] == im_to_align.shape[:2]
     try:
-        warp_mode = cv2.MOTION_TRANSLATION
-        warp_matrix = np.eye(2, 3, dtype=np.float32)
-        criteria = (
-            cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 5000,  1e-8)
-        cc, warp_matrix = cv2.findTransformECC(
-            im_ref, im_to_align, warp_matrix, warp_mode, criteria)
-        if key is not None:
-            # TODO - load from key
-            with Path('align_cache').joinpath('{}.alignment'.format(key))\
-                    .open('wb') as f:
-                pickle.dump((cc, warp_matrix), f)
+        cc, warp_matrix = _get_alignment(im_ref, im_to_align, key)
     except cv2.error as e:
         logger.info('Error getting alignment: {}'.format(e))
         return im, False
     else:
-        logger.info('Got alignment with cc {}: {}'
-              .format(cc, str(warp_matrix).replace('\n', '')))
         im = cv2.warpAffine(im, warp_matrix, (h, w),
                             flags=cv2.INTER_LINEAR + cv2.WARP_INVERSE_MAP)
         im[im == 0] = np.mean(im)
         return im, True
+
+
+def _get_alignment(im_ref, im_to_align, key):
+    if key is not None:
+        cached_path = Path('align_cache').joinpath('{}.alignment'.format(key))
+        if cached_path.exists():
+            with cached_path.open('rb') as f:
+                return pickle.load(f)
+    logger.info('Getting alignment for {}'.format(key))
+    warp_mode = cv2.MOTION_TRANSLATION
+    warp_matrix = np.eye(2, 3, dtype=np.float32)
+    criteria = (
+        cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 5000,  1e-8)
+    cc, warp_matrix = cv2.findTransformECC(
+        im_ref, im_to_align, warp_matrix, warp_mode, criteria)
+    if key is not None:
+        with cached_path.open('wb') as f:
+            pickle.dump((cc, warp_matrix), f)
+    logger.info('Got alignment for {} with cc {:.3f}: {}'
+                .format(key, cc, str(warp_matrix).replace('\n', '')))
+    return cc, warp_matrix
 
 
 def load_polygons(im_id: str, im_size: Tuple[int, int])\

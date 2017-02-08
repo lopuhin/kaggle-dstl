@@ -25,7 +25,8 @@ def main():
             all_data.update(
                 ((im_id, poly_type), poly) for im_id, poly_type, poly in reader)
 
-    with gzip.open(str(args.output), 'wt') as outf:
+    opener = gzip.open if args.output.endswith('.gz') else open
+    with opener(str(args.output), 'wt') as outf:
         writer = csv.writer(outf)
         with open('sample_submission.csv') as f:
             reader = csv.reader(f)
