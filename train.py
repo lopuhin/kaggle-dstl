@@ -330,7 +330,14 @@ class Model:
             fname = lambda s: str(self.logdir / ('{:0>3}_{}.png'.format(i, s)))
             x = utils.scale_percentile(x.transpose(1, 2, 0))
             channels = [x[:, :, :3]]  # RGB
-            if x.shape[-1] == 20:
+            if x.shape[-1] == 12:
+                channels.extend([
+                    x[:, :, 4:7],    # M
+                    x[:, :, 3:4],    # P (will be shown below RGB)
+                    # 7 and 8 from M are skipped
+                    x[:, :, 9:12],   # M
+                ])
+            elif x.shape[-1] == 20:
                 channels.extend([
                     x[:, :, 4:7],    # M
                     x[:, :, 6:9],    # M (overlap)
@@ -341,10 +348,11 @@ class Model:
                     x[:, :, 17:],    # A
                 ])
             channels = [np.maximum(border, ch) for ch in channels]
-            if len(channels) == 8:
+            if len(channels) >= 4:
+                n = len(channels) // 2
                 img = np.concatenate(
-                    [np.concatenate(channels[:4], 1),
-                     np.concatenate(channels[4:], 1)], 0)
+                    [np.concatenate(channels[:n], 1),
+                     np.concatenate(channels[n:], 1)], 0)
             else:
                 img = np.concatenate(channels, axis=1)
             cv2.imwrite(fname('-x'), img * 255)
