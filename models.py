@@ -205,7 +205,6 @@ class UNet(BaseNet):
 
     def forward(self, x):
         xs = []
-        n = len(self.filters)
         for i, down in enumerate(self.down):
             x_out = down(self.pool(xs[-1]) if xs else x)
             xs.append(x_out)
@@ -249,25 +248,25 @@ class UNet2Module(nn.Module):
 class UNet2(BaseNet):
     def __init__(self, hps):
         super().__init__(hps)
-        self.pool = nn.MaxPool2d(2, 2)
         b = hps.filters_base
         self.filters = [b * 2, b * 2, b * 4, b * 8, b * 16]
-        self.down, self.up, self.mid, self.down_pool = [[] for _ in range(4)]
+        self.down, self.down_pool, self.mid, self.up = [[] for _ in range(4)]
         for i, nf in enumerate(self.filters):
             low_nf = hps.n_channels if i == 0 else self.filters[i - 1]
             self.down_pool.append(
                 nn.Conv2d(low_nf, low_nf, 3, padding=1, stride=2))
+            setattr(self, 'down_pool_{}'.format(i), self.down_pool[-1])
             self.down.append(UNet2Module(hps, low_nf, nf))
             setattr(self, 'down_{}'.format(i), self.down[-1])
             if i != 0:
                 self.mid.append(Conv3BN(hps, low_nf, low_nf))
+                setattr(self, 'mid_{}'.format(i), self.mid[-1])
                 self.up.append(UNet2Module(hps, low_nf + nf, low_nf))
-                setattr(self, 'conv_up_{}'.format(i), self.up[-1])
+                setattr(self, 'up_{}'.format(i), self.up[-1])
         self.conv_final = nn.Conv2d(self.filters[0], hps.n_classes, 1)
 
     def forward(self, x):
         xs = []
-        n = len(self.filters)
         for i, (down, down_pool) in enumerate(zip(self.down, self.down_pool)):
             x_out = down(down_pool(xs[-1]) if xs else x)
             xs.append(x_out)
