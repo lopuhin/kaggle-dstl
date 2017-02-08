@@ -217,3 +217,65 @@ class UNet(BaseNet):
         x_out = self.conv_final(x_out)
         b = self.hps.patch_border
         return F.sigmoid(x_out[:, :, b:-b, b:-b])
+
+
+class Conv3BN(nn.Module):
+    def __init__(self, hps: HyperParams, in_: int, out: int):
+        super().__init__()
+        self.conv = conv3x3(in_, out)
+        self.bn = nn.BatchNorm2d(out) if hps.bn else None
+        self.activation = getattr(F, hps.activation)
+
+    def forward(self, x):
+        x = self.conv(x)
+        if self.bn is not None:
+            x = self.bn(x)
+        x = self.activation(x)
+        return x
+
+
+class UNet2Module(nn.Module):
+    def __init__(self, hps: HyperParams, in_: int, out: int):
+        super().__init__()
+        self.l1 = Conv3BN(hps, in_, out)
+        self.l2 = Conv3BN(hps, out, out)
+
+    def forward(self, x):
+        x = self.l1(x)
+        x = self.l2(x)
+        return x
+
+
+class UNet2(BaseNet):
+    def __init__(self, hps):
+        super().__init__(hps)
+        self.pool = nn.MaxPool2d(2, 2)
+        b = hps.filters_base
+        self.filters = [b * 2, b * 2, b * 4, b * 8, b * 16]
+        self.down, self.up, self.mid, self.down_pool = [[] for _ in range(4)]
+        for i, nf in enumerate(self.filters):
+            low_nf = hps.n_channels if i == 0 else self.filters[i - 1]
+            self.down_pool.append(
+                nn.Conv2d(low_nf, low_nf, 3, padding=1, stride=2))
+            self.down.append(UNet2Module(hps, low_nf, nf))
+            setattr(self, 'down_{}'.format(i), self.down[-1])
+            if i != 0:
+                self.mid.append(Conv3BN(hps, low_nf, low_nf))
+                self.up.append(UNet2Module(hps, low_nf + nf, low_nf))
+                setattr(self, 'conv_up_{}'.format(i), self.up[-1])
+        self.conv_final = nn.Conv2d(self.filters[0], hps.n_classes, 1)
+
+    def forward(self, x):
+        xs = []
+        n = len(self.filters)
+        for i, (down, down_pool) in enumerate(zip(self.down, self.down_pool)):
+            x_out = down(down_pool(xs[-1]) if xs else x)
+            xs.append(x_out)
+
+        x_out = xs[-1]
+        for x_skip, up, mid in reversed(list(zip(xs[:-1], self.up, self.mid))):
+            x_out = up(torch.cat([upsample2d(x_out), mid(x_skip)], 1))
+
+        x_out = self.conv_final(x_out)
+        b = self.hps.patch_border
+        return F.sigmoid(x_out[:, :, b:-b, b:-b])
