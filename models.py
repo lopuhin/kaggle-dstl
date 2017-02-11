@@ -24,7 +24,7 @@ class HyperParams:
 
     validation_square = attr.ib(default=400)
 
-    dropout_keep_prob = attr.ib(default=0.0)  # TODO
+    dropout = attr.ib(default=0.0)
     bn = attr.ib(default=0)
     activation = attr.ib(default='relu')
     dice_loss = attr.ib(default=0.0)
@@ -46,7 +46,9 @@ class HyperParams:
 
     @classmethod
     def from_dir(cls, root: Path):
-        return cls(**json.loads(root.joinpath('hps.json').read_text()))
+        params = json.loads(root.joinpath('hps.json').read_text())
+        fields = {field.name for field in attr.fields(HyperParams)}
+        return cls(**{k: v for k, v in params.items() if k in fields})
 
     def update(self, hps_string: str):
         if hps_string:
@@ -67,6 +69,11 @@ class BaseNet(nn.Module):
     def __init__(self, hps: HyperParams):
         super().__init__()
         self.hps = hps
+        if hps.dropout:
+            self.dropout = nn.Dropout(p=hps.dropout)
+            self.dropout2d = nn.Dropout2d(p=hps.dropout)
+        else:
+            self.dropout = self.dropout2d = lambda x: x
         self.register_buffer('global_step', torch.IntTensor(1).zero_())
 
 
@@ -188,7 +195,7 @@ class UNetModule(nn.Module):
 
 
 class UNet(BaseNet):
-    def __init__(self, hps):
+    def __init__(self, hps: HyperParams):
         super().__init__(hps)
         self.pool = nn.MaxPool2d(2, 2)
         b = hps.filters_base
@@ -207,11 +214,13 @@ class UNet(BaseNet):
         xs = []
         for i, down in enumerate(self.down):
             x_out = down(self.pool(xs[-1]) if xs else x)
+            x_out = self.dropout2d(x_out)
             xs.append(x_out)
 
         x_out = xs[-1]
         for x_skip, up in reversed(list(zip(xs[:-1], self.up))):
             x_out = up(torch.cat([upsample2d(x_out), x_skip], 1))
+            x_out = self.dropout2d(x_out)
 
         x_out = self.conv_final(x_out)
         b = self.hps.patch_border
