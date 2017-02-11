@@ -45,7 +45,8 @@ class Model:
         self.hps = hps
         self.net = getattr(models, hps.net)(hps)
         self.bce_loss = nn.BCELoss()
-        self.optimizer = optim.Adam(self.net.parameters(), lr=hps.lr)
+        self.optimizer = None  # type: optim.Optimizer
+        self.optimizer_cls = optim.Adam
         self.tb_logger = None  # type: tensorboard_logger.Logger
         self.logdir = None  # type: Path
         self.on_gpu = torch.cuda.is_available()
@@ -90,8 +91,13 @@ class Model:
         valid_images = None
         n_epoch = self.restore_last_snapshot(logdir)
         square_validation = validation == 'square'
+        lr = self.hps.lr
+        self.optimizer = self.optimizer_cls(self.net.parameters(), lr=lr)
         for n_epoch in range(n_epoch, self.hps.n_epochs):
-            logger.info('Epoch {}, training'.format(n_epoch + 1))
+            if self.hps.lr_decay:
+                lr = self.hps.lr * self.hps.lr_decay ** n_epoch
+                self.optimizer = self.optimizer_cls(self.net.parameters(), lr=lr)
+            logger.info('Starting epoch {}, lr {:.8f}'.format(n_epoch + 1, lr))
             subsample = 4  # make validation more often
             for _ in range(subsample):
                 self.train_on_images(
@@ -175,7 +181,8 @@ class Model:
         mb = m + b  # full margin
         mean_area = np.mean(
             [im.size[0] * im.size[1] for im in train_images])
-        n_batches = int(mean_area / (s + b) / self.hps.batch_size / subsample)
+        n_batches = int(
+            mean_area / (s + b) / self.hps.batch_size / subsample / 2)
 
         def gen_batch(_):
             inputs, outputs = [], []
@@ -378,7 +385,7 @@ class Model:
             if subsample != 1:
                 random.shuffle(all_xy)
                 all_xy = all_xy[:len(all_xy) // subsample]
-            for xy_batch in utils.chunks(all_xy, self.hps.batch_size):
+            for xy_batch in utils.chunks(all_xy, self.hps.batch_size // 2):
                 inputs = np.array(
                     [im.data[:, x - b: x + s + b, y - b: y + s + b]
                      for x, y in xy_batch]).astype(np.float32)

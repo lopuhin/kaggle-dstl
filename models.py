@@ -31,9 +31,10 @@ class HyperParams:
 
     filters_base = attr.ib(default=32)
 
-    n_epochs = attr.ib(default=30)
+    n_epochs = attr.ib(default=100)
     oversample = attr.ib(default=0.0)
     lr = attr.ib(default=0.0001)
+    lr_decay = attr.ib(default=0.0)
     batch_size = attr.ib(default=128)
 
     @property
