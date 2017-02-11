@@ -204,7 +204,7 @@ class Model:
                         patch = np.flip(patch, 2)
                         mask = np.flip(mask, 2)
                 if self.hps.augment_rotations:
-                    angle = random.random() * 180
+                    angle = random.random() * 360
                     patch = utils.rotated(patch, angle)
                     mask = utils.rotated(mask, angle)
                 inputs.append(patch[:, m: -m, m: -m].astype(np.float32))
@@ -485,7 +485,7 @@ def main():
     arg('--hps', type=str, help='Change hyperparameters in k1=v1,k2=v2 format')
     arg('--all', action='store_true',
         help='Train on all images without validation')
-    arg('--validation', choices=['random', 'stratified', 'square'],
+    arg('--validation', choices=['random', 'stratified', 'square', 'custom'],
         default='stratified', help='validation strategy')
     arg('--only', type=str,
         help='Train on this image ids only (comma-separated) without validation')
@@ -534,6 +534,9 @@ def main():
         train_ids, valid_ids = [[other_ids[idx] for idx in g] for g in next(
             ShuffleSplit(random_state=1, n_splits=4).split(other_ids))]
         train_ids.extend(forced_train_ids)
+    elif args.validation == 'custom':
+        valid_ids = ['6140_3_1', '6110_1_2', '6160_2_1', '6170_0_4', '6100_2_2']
+        train_ids = [im_id for im_id in all_im_ids if im_id not in valid_ids]
     else:
         raise ValueError('Unexpected validation kind: {}'.format(args.validation))
 
