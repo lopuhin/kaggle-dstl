@@ -204,7 +204,7 @@ class Model:
                         patch = np.flip(patch, 2)
                         mask = np.flip(mask, 2)
                 if self.hps.augment_rotations:
-                    angle = random.random() * 360
+                    angle = (2 * random.random() - 1.) * 10
                     patch = utils.rotated(patch, angle)
                     mask = utils.rotated(mask, angle)
                 inputs.append(patch[:, m: -m, m: -m].astype(np.float32))
