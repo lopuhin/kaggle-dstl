@@ -520,7 +520,7 @@ def main():
     arg('--all', action='store_true',
         help='Train on all images without validation')
     arg('--validation', choices=['random', 'stratified', 'square', 'custom'],
-        default='stratified', help='validation strategy')
+        default='custom', help='validation strategy')
     arg('--only', type=str,
         help='Train on this image ids only (comma-separated) without validation')
     arg('--clean', action='store_true', help='Clean logdir')
