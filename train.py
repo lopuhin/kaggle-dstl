@@ -33,11 +33,21 @@ class Image:
     id = attr.ib()
     data = attr.ib()
     mask = attr.ib(default=None)
+    _dist_mask = attr.ib(default=None)
 
     @property
     def size(self):
         assert self.data.shape[0] <= 20
         return self.data.shape[1:]
+
+    @property
+    def dist_mask(self):
+        if self._dist_mask is None:
+            assert self.mask.shape[0] <= 10
+            self._dist_mask = (
+                np.stack([utils.dist_mask(m) for m in self.mask])
+                .astype(np.float16))
+        return self._dist_mask
 
 
 class Model:
@@ -45,6 +55,7 @@ class Model:
         self.hps = hps
         self.net = getattr(models, hps.net)(hps)
         self.bce_loss = nn.BCELoss()
+        self.mce_loss = nn.MSELoss()
         self.optimizer = None  # type: optim.Optimizer
         self.optimizer_cls = optim.Adam
         self.tb_logger = None  # type: tensorboard_logger.Logger
@@ -56,12 +67,11 @@ class Model:
     def _var(self, x):
         return Variable(x.cuda() if self.on_gpu else x)
 
-    def train_step(self, x, y):
-        x, y = self._var(x), self._var(y)
+    def train_step(self, x, y, dist_y):
         self.optimizer.zero_grad()
-        y_pred = self.net(x)
+        y_pred = self.net(self._var(x))
         batch_size = x.size()[0]
-        losses = self.losses(y, y_pred)
+        losses = self.losses(y, dist_y, y_pred)
         loss = losses[0]
         for l in losses[1:]:
             loss += l
@@ -70,8 +80,11 @@ class Model:
         self.net.global_step += 1
         return losses
 
-    def losses(self, ys, y_preds):
+    def losses(self, ys, ys_dist, y_preds):
         losses = []
+        ys = self._var(ys)
+        if self.hps.dist_loss:
+            ys_dist = self._var(ys_dist)
         for cls_idx in range(self.hps.n_classes):
             y, y_pred = ys[:, cls_idx], y_preds[:, cls_idx]
             loss = self.bce_loss(y_pred, y)
@@ -79,7 +92,11 @@ class Model:
                 intersection = (y_pred * y).sum()
                 uwi = y_pred.sum() + y.sum()  # without intersection union
                 if uwi[0] != 0:
-                    loss = (loss / self.hps.dice_loss + (1 - intersection / uwi))
+                    loss += 1 - intersection / uwi * self.hps.dice_loss
+            if self.hps.dist_loss:
+                loss += (self.mce_loss(ys_dist[:, cls_idx], y) *
+                         self.hps.dist_loss)
+            loss /= 1 + self.hps.dist_loss + self.hps.dice_loss
             losses.append(loss)
         return losses
 
@@ -185,7 +202,7 @@ class Model:
             mean_area / (s + b) / self.hps.batch_size / subsample / 2)
 
         def gen_batch(_):
-            inputs, outputs = [], []
+            inputs, outputs, dist_outputs = [], [], []
             for _ in range(self.hps.batch_size):
                 im, (x, y) = self.sample_im_xy(train_images, square_validation)
                 if random.random() < self.hps.oversample:
@@ -196,6 +213,8 @@ class Model:
                             train_images, square_validation)
                 patch = im.data[:, x - mb: x + s + mb, y - mb: y + s + mb]
                 mask = im.mask[:, x - m: x + s + m, y - m: y + s + m]
+                if self.hps.dist_loss:
+                    dist_mask = im.dist_mask[:, x - m: x + s + m, y - m: y + s + m]
                 if self.hps.augment_flips:
                     if random.random() < 0.5:
                         patch = np.flip(patch, 1)
@@ -209,9 +228,13 @@ class Model:
                     mask = utils.rotated(mask, angle)
                 inputs.append(patch[:, m: -m, m: -m].astype(np.float32))
                 outputs.append(mask[:, m: -m, m: -m].astype(np.float32))
+                if self.hps.dist_loss:
+                    dist_outputs.append(
+                        dist_mask[:, m: -m, m: -m].astype(np.float32))
 
             return (torch.from_numpy(np.array(inputs)),
-                    torch.from_numpy(np.array(outputs)))
+                    torch.from_numpy(np.array(outputs)),
+                    torch.from_numpy(np.array(dist_outputs)))
 
         self._train_on_feeds(gen_batch, n_batches, no_mp=no_mp)
 
@@ -247,7 +270,7 @@ class Model:
         im_log_step = n_batches // log_step * log_step
         map_ = (map if no_mp else
                 partial(utils.imap_fixed_output_buffer, threads=4))
-        for i, (x, y) in enumerate(map_(gen_batch, range(n_batches))):
+        for i, (x, y, dist_y) in enumerate(map_(gen_batch, range(n_batches))):
             if losses[0] and i % log_step == 0:
                 for cls, ls in zip(self.hps.classes, losses):
                     self._log_value(
@@ -261,7 +284,7 @@ class Model:
                 self._log_jaccard(jaccard_stats)
                 if i == im_log_step:
                     self._log_im(x.numpy(), y.numpy(), pred_y.numpy())
-            step_losses = self.train_step(x, y)
+            step_losses = self.train_step(x, y, dist_y)
             for ls, l in zip(losses, step_losses):
                 ls.append(l.data[0])
             t1 = time.time()
