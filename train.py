@@ -64,7 +64,7 @@ class Model:
         if self.on_gpu:
             self.net.cuda()
 
-    def _var(self, x):
+    def _var(self, x: torch.FloatTensor) -> Variable:
         return Variable(x.cuda() if self.on_gpu else x)
 
     def train_step(self, x, y, dist_y):
@@ -80,7 +80,10 @@ class Model:
         self.net.global_step += 1
         return losses
 
-    def losses(self, ys, ys_dist, y_preds):
+    def losses(self,
+               ys: torch.FloatTensor,
+               ys_dist: torch.FloatTensor,
+               y_preds: Variable):
         losses = []
         ys = self._var(ys)
         if self.hps.dist_loss:
@@ -415,9 +418,17 @@ class Model:
                 outputs = np.array(
                     [im.mask[:, x: x + s, y: y + s] for x, y in xy_batch])
                 outputs = outputs.astype(np.float32)
+                if self.hps.dist_loss:
+                    dist_outputs = np.array([im.dist_mask[:, x: x + s, y: y + s]
+                                             for x, y in xy_batch])
+                    dist_outputs = dist_outputs.astype(np.float32)
+                else:
+                    dist_outputs = np.array([])
                 y_pred = self.net(self._var(torch.from_numpy(inputs)))
                 step_losses = self.losses(
-                    self._var(torch.from_numpy(outputs)), y_pred)
+                    torch.from_numpy(outputs),
+                    torch.from_numpy(dist_outputs),
+                    y_pred)
                 for ls, l in zip(losses, step_losses):
                     ls.append(l.data[0])
                 y_pred_numpy = y_pred.data.cpu().numpy()
