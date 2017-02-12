@@ -6,7 +6,7 @@ from pathlib import Path
 from pprint import pprint
 import random
 import time
-from typing import Dict, List
+from typing import List
 
 import attr
 import cv2
@@ -60,7 +60,6 @@ class Model:
         self.optimizer_cls = optim.Adam
         self.tb_logger = None  # type: tensorboard_logger.Logger
         self.logdir = None  # type: Path
-        self.area_by_cls = None  # type: Dict[int, float]
         self.on_gpu = torch.cuda.is_available()
         if self.on_gpu:
             self.net.cuda()
@@ -89,29 +88,25 @@ class Model:
         ys = self._var(ys)
         if self.hps.dist_loss:
             ys_dist = self._var(ys_dist)
-        for cls_idx, cls in enumerate(self.hps.classes):
+        for cls_idx in range(self.hps.n_classes):
             y, y_pred = ys[:, cls_idx], y_preds[:, cls_idx]
             loss = self.bce_loss(y_pred, y)
-            if self.hps.dist_loss:
-                loss += (self.mce_loss(ys_dist[:, cls_idx], y) *
-                         self.hps.dist_loss)
-            if self.hps.area_weight_loss:
-                loss /= max(self.area_by_cls[cls], 0.05)
             if self.hps.dice_loss:
                 intersection = (y_pred * y).sum()
                 uwi = y_pred.sum() + y.sum()  # without intersection union
                 if uwi[0] != 0:
                     loss += 1 - intersection / uwi * self.hps.dice_loss
+            if self.hps.dist_loss:
+                loss += (self.mce_loss(ys_dist[:, cls_idx], y) *
+                         self.hps.dist_loss)
             loss /= 1 + self.hps.dist_loss + self.hps.dice_loss
             losses.append(loss)
         return losses
 
     def train(self, logdir: Path, train_ids: List[str], valid_ids: List[str],
-              validation: str, area_by_cls: Dict[int, float],
-              no_mp: bool=False):
+              validation: str, no_mp: bool=False):
         self.tb_logger = tensorboard_logger.Logger(str(logdir))
         self.logdir = logdir
-        self.area_by_cls = area_by_cls
         train_images = [self.load_image(im_id) for im_id in sorted(train_ids)]
         valid_images = None
         n_epoch = self.restore_last_snapshot(logdir)
@@ -554,9 +549,6 @@ def main():
                                 for cls in hps.classes]))
                for im_id in all_im_ids]
     area_by_id = dict(im_area)
-    area_by_cls = {cls: sum(mask_stats[im_id][str(cls)]['area']
-                            for im_id in all_im_ids)
-                   for cls in hps.classes}
     valid_ids = []
 
     if args.only:
@@ -594,7 +586,6 @@ def main():
                 valid_ids=valid_ids,
                 validation=args.validation,
                 no_mp=args.no_mp,
-                area_by_cls=area_by_cls,
                 )
 
 
