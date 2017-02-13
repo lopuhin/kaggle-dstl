@@ -19,7 +19,7 @@ class HyperParams:
     patch_inner = attr.ib(default=64)
     patch_border = attr.ib(default=16)
 
-    augment_rotations = attr.ib(default=1)
+    augment_rotations = attr.ib(default=10.0)
     augment_flips = attr.ib(default=0)
 
     validation_square = attr.ib(default=400)
