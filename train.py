@@ -95,7 +95,7 @@ class Model:
                 intersection = (y_pred * y).sum()
                 uwi = y_pred.sum() + y.sum()  # without intersection union
                 if uwi[0] != 0:
-                    loss += 1 - intersection / uwi * self.hps.dice_loss
+                    loss += (1 - intersection / uwi) * self.hps.dice_loss
             if self.hps.dist_loss:
                 loss += (self.mce_loss(ys_dist[:, cls_idx], y) *
                          self.hps.dist_loss)
