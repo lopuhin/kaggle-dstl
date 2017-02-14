@@ -222,14 +222,20 @@ class Model:
                     if random.random() < 0.5:
                         patch = np.flip(patch, 1)
                         mask = np.flip(mask, 1)
+                        if self.hps.dist_loss:
+                            dist_mask = np.flip(dist_mask, 1)
                     if random.random() < 0.5:
                         patch = np.flip(patch, 2)
                         mask = np.flip(mask, 2)
+                        if self.hps.dist_loss:
+                            dist_mask = np.flip(dist_mask, 2)
                 if self.hps.augment_rotations:
                     assert self.hps.augment_rotations != 1  # old format
                     angle = (2 * random.random() - 1.) * self.hps.augment_rotations
                     patch = utils.rotated(patch, angle)
                     mask = utils.rotated(mask, angle)
+                    if self.hps.dist_loss:
+                        dist_mask = utils.rotated(dist_mask, angle)
                 inputs.append(patch[:, m: -m, m: -m].astype(np.float32))
                 outputs.append(mask[:, m: -m, m: -m].astype(np.float32))
                 if self.hps.dist_loss:
@@ -287,7 +293,8 @@ class Model:
                 self._update_jaccard(jaccard_stats, y.numpy(), pred_y.numpy())
                 self._log_jaccard(jaccard_stats)
                 if i == im_log_step:
-                    self._log_im(x.numpy(), y.numpy(), pred_y.numpy())
+                    self._log_im(
+                        x.numpy(), y.numpy(), dist_y.numpy(), pred_y.numpy())
             step_losses = self.train_step(x, y, dist_y)
             for ls, l in zip(losses, step_losses):
                 ls.append(l.data[0])
@@ -353,7 +360,9 @@ class Model:
             'at {:.2f}: {:.3f}'.format(threshold, np.mean(cls_jaccards))
             for threshold, cls_jaccards in sorted(jaccard_by_threshold.items()))
 
-    def _log_im(self, xs: np.ndarray, ys: np.ndarray, pred_ys: np.ndarray):
+    def _log_im(self, xs: np.ndarray,
+                ys: np.ndarray, dist_ys: np.ndarray,
+                pred_ys: np.ndarray):
         b = self.hps.patch_border
         s = self.hps.patch_inner
         border = np.zeros([b * 2 + s, b * 2 + s, 3], dtype=np.float32)
@@ -390,9 +399,12 @@ class Model:
             else:
                 img = np.concatenate(channels, axis=1)
             cv2.imwrite(fname('-x'), img * 255)
-            for cls, c_y, c_p in zip(self.hps.classes, y, p):
+            for j, (cls, c_y, c_p) in enumerate(zip(self.hps.classes, y, p)):
                 cv2.imwrite(fname('{}-y'.format(cls)), c_y * 255)
                 cv2.imwrite(fname('{}-z'.format(cls)), c_p * 255)
+                if dist_ys.shape[0]:
+                    cv2.imwrite(fname('{}-d'.format(cls)), dist_ys[i, j] * 255)
+
 
     def _log_value(self, name, value):
         self.tb_logger.log_value(name, value, step=self.net.global_step[0])
