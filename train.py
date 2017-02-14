@@ -55,7 +55,6 @@ class Model:
         self.hps = hps
         self.net = getattr(models, hps.net)(hps)
         self.bce_loss = nn.BCELoss()
-        self.mce_loss = nn.MSELoss()
         self.optimizer = None  # type: optim.Optimizer
         self.optimizer_cls = optim.Adam
         self.tb_logger = None  # type: tensorboard_logger.Logger
@@ -97,7 +96,7 @@ class Model:
                 if uwi[0] != 0:
                     loss += (1 - intersection / uwi) * self.hps.dice_loss
             if self.hps.dist_loss:
-                loss += (self.mce_loss(ys_dist[:, cls_idx], y) *
+                loss += (self.bce_loss(y_pred, ys_dist[:, cls_idx]) *
                          self.hps.dist_loss)
             loss /= 1 + self.hps.dist_loss + self.hps.dice_loss
             losses.append(loss)
