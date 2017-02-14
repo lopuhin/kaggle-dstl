@@ -19,7 +19,7 @@ class HyperParams:
     patch_inner = attr.ib(default=64)
     patch_border = attr.ib(default=16)
 
-    augment_rotations = attr.ib(default=10.0)
+    augment_rotations = attr.ib(default=10.0)  # degrees
     augment_flips = attr.ib(default=0)
 
     validation_square = attr.ib(default=400)
@@ -56,7 +56,7 @@ class HyperParams:
         if hps_string:
             values = dict(pair.split('=') for pair in hps_string.split(','))
             for field in attr.fields(HyperParams):
-                v = values.get(field.name)
+                v = values.pop(field.name, None)
                 if v is not None:
                     default = field.default
                     assert not isinstance(default, bool)
@@ -65,6 +65,8 @@ class HyperParams:
                     elif isinstance(default, list):
                         v = [int(x) for x in v.split('-')]
                     setattr(self, field.name, v)
+            if values:
+                raise ValueError('Unknown hyperparams: {}'.format(values))
 
 
 class BaseNet(nn.Module):
