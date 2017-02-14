@@ -45,7 +45,7 @@ class Image:
         if self._dist_mask is None:
             assert self.mask.shape[0] <= 10
             self._dist_mask = (
-                np.stack([utils.dist_mask(m) for m in self.mask])
+                np.stack([utils.dist_mask(m, max_dist=5) for m in self.mask])
                 .astype(np.float16))
         return self._dist_mask
 
@@ -55,6 +55,7 @@ class Model:
         self.hps = hps
         self.net = getattr(models, hps.net)(hps)
         self.bce_loss = nn.BCELoss()
+        self.mse_loss = nn.MSELoss()
         self.optimizer = None  # type: optim.Optimizer
         self.optimizer_cls = optim.Adam
         self.tb_logger = None  # type: tensorboard_logger.Logger
@@ -96,7 +97,7 @@ class Model:
                 if uwi[0] != 0:
                     loss += (1 - intersection / uwi) * self.hps.dice_loss
             if self.hps.dist_loss:
-                loss += (self.bce_loss(y_pred, ys_dist[:, cls_idx]) *
+                loss += (self.mse_loss(y_pred, ys_dist[:, cls_idx]) *
                          self.hps.dist_loss)
             loss /= 1 + self.hps.dist_loss + self.hps.dice_loss
             losses.append(loss)
