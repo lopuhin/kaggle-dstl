@@ -91,7 +91,7 @@ def _aligned(im_ref, im, im_to_align=None, key=None):
         return im, False
     else:
         im = cv2.warpAffine(im, warp_matrix, (h, w),
-                            flags=cv2.INTER_CUBIC + cv2.WARP_INVERSE_MAP)
+                            flags=cv2.INTER_LINEAR + cv2.WARP_INVERSE_MAP)
         im[im == 0] = np.mean(im)
         return im, True
 
@@ -175,7 +175,7 @@ def rotated(patch: np.ndarray, angle: float) -> np.ndarray:
     size = patch.shape[:2]
     center = tuple(np.array(size) / 2)
     rot_mat = cv2.getRotationMatrix2D(center, angle, 1.0)
-    patch = cv2.warpAffine(patch, rot_mat, size, flags=cv2.INTER_CUBIC)
+    patch = cv2.warpAffine(patch, rot_mat, size, flags=cv2.INTER_LINEAR)
     if len(patch.shape) == 2:
         return np.expand_dims(patch, 0)
     else:
