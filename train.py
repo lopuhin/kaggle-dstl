@@ -57,12 +57,14 @@ class Model:
         self.bce_loss = nn.BCELoss()
         self.mse_loss = nn.MSELoss()
         self.optimizer = None  # type: optim.Optimizer
-        self.optimizer_cls = optim.Adam
         self.tb_logger = None  # type: tensorboard_logger.Logger
         self.logdir = None  # type: Path
         self.on_gpu = torch.cuda.is_available()
         if self.on_gpu:
             self.net.cuda()
+
+    def _init_optimizer(self, lr):
+        return optim.Adam(self.net.parameters(), lr=lr)
 
     def _var(self, x: torch.FloatTensor) -> Variable:
         return Variable(x.cuda() if self.on_gpu else x)
@@ -112,11 +114,11 @@ class Model:
         n_epoch = self.restore_last_snapshot(logdir)
         square_validation = validation == 'square'
         lr = self.hps.lr
-        self.optimizer = self.optimizer_cls(self.net.parameters(), lr=lr)
+        self.optimizer = self._init_optimizer(lr)
         for n_epoch in range(n_epoch, self.hps.n_epochs):
             if self.hps.lr_decay:
                 lr = self.hps.lr * self.hps.lr_decay ** n_epoch
-                self.optimizer = self.optimizer_cls(self.net.parameters(), lr=lr)
+                self.optimizer = self._init_optimizer(lr)
             logger.info('Starting epoch {}, lr {:.8f}'.format(n_epoch + 1, lr))
             subsample = 4  # make validation more often
             for _ in range(subsample):
