@@ -31,6 +31,7 @@ class HyperParams:
     dist_loss = attr.ib(default=0.0)
 
     filters_base = attr.ib(default=32)
+    lowdef_bypass = attr.ib(default=0)
 
     n_epochs = attr.ib(default=100)
     oversample = attr.ib(default=0.0)
@@ -202,12 +203,20 @@ class UNet(BaseNet):
     def __init__(self, hps: HyperParams):
         super().__init__(hps)
         self.pool = nn.MaxPool2d(2, 2)
+        self.avg_pool = nn.AvgPool2d(2, 2)
         b = hps.filters_base
         self.filters = [b, b * 2, b * 4, b * 8, b * 16]
         self.down, self.up = [], []
         for i, nf in enumerate(self.filters):
-            low_nf = hps.n_channels if i == 0 else self.filters[i - 1]
-            self.down.append(UNetModule(hps, low_nf, nf))
+            if i == 0:
+                low_nf = 4 if hps.lowdef_bypass else hps.n_channels
+            else:
+                low_nf = self.filters[i - 1]
+            if i == 1 and hps.lowdef_bypass:
+                in_f = low_nf + (hps.n_channels - 4)
+            else:
+                in_f = low_nf
+            self.down.append(UNetModule(hps, in_f, nf))
             setattr(self, 'down_{}'.format(i), self.down[-1])
             if i != 0:
                 self.up.append(UNetModule(hps, low_nf + nf, low_nf))
@@ -216,8 +225,13 @@ class UNet(BaseNet):
 
     def forward(self, x):
         xs = []
+        if self.hps.lowdef_bypass:
+            x, x_lowdef = x[:, :4], x[:, 4:]
         for i, down in enumerate(self.down):
-            x_out = down(self.pool(xs[-1]) if xs else x)
+            x_in = self.pool(xs[-1]) if xs else x
+            if i == 1 and self.hps.lowdef_bypass:
+                x_in = torch.cat([x_in, self.avg_pool(x_lowdef)], 1)
+            x_out = down(x_in)
             x_out = self.dropout2d(x_out)
             xs.append(x_out)
 
