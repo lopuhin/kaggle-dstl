@@ -30,7 +30,7 @@ def main():
     arg('--threshold', type=float, default=0.5)
     arg('--epsilon', type=float, default=2.0, help='smoothing')
     arg('--min-area', type=float, default=50.0)
-    arg('--min-car-area', type=float, default=10.0)
+    arg('--min-small-area', type=float, default=10.0)
     arg('--masks-only', action='store_true', help='Do only mask prediction')
     arg('--model-path', type=Path,
         help='Path to a specific model (if the last is not desired)')
@@ -82,7 +82,7 @@ def main():
                             classes=hps.classes,
                             epsilon=args.epsilon,
                             min_area=args.min_area,
-                            min_car_area=args.min_car_area,
+                            min_small_area=args.min_small_area,
                             debug=args.debug,
                             to_fix=to_fix,
                             hps=hps,
@@ -155,7 +155,7 @@ def get_poly_data(im_id, *,
                   classes: List[int],
                   epsilon: float,
                   min_area: float,
-                  min_car_area: float,
+                  min_small_area: float,
                   debug: bool,
                   to_fix: Set[str],
                   hps: HyperParams
@@ -186,7 +186,7 @@ def get_poly_data(im_id, *,
             else:
                 unscaled, pred_poly = get_polygons(
                     im_id, mask, epsilon,
-                    min_area=min_car_area if cls in {8, 9} else min_area,
+                    min_area=min_small_area if cls in {1, 8, 9} else min_area,
                     fix='{}_{}'.format(im_id, poly_type) in to_fix,
                 )
                 rows.append(
