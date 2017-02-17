@@ -117,15 +117,18 @@ class Model:
         self.optimizer = self._init_optimizer(lr)
         for n_epoch in range(n_epoch, self.hps.n_epochs):
             if self.hps.lr_decay:
-                lr = self.hps.lr * self.hps.lr_decay ** n_epoch
-                self.optimizer = self._init_optimizer(lr)
-            if n_epoch == 25:
-                lr = self.hps.lr / 5
-                self.optimizer = self._init_optimizer(lr)
-            if n_epoch == 50:
-                lr = self.hps.lr / 25
-                self.optimizer = self._init_optimizer(lr)
-            logger.info('Starting epoch {}, lr {:.8f}'.format(n_epoch + 1, lr))
+                if n_epoch % 2 == 0:
+                    lr = self.hps.lr * self.hps.lr_decay ** n_epoch
+                    self.optimizer = self._init_optimizer(lr)
+            else:
+                if n_epoch == 25:
+                    lr = self.hps.lr / 5
+                    self.optimizer = self._init_optimizer(lr)
+                elif n_epoch == 50:
+                    lr = self.hps.lr / 25
+                    self.optimizer = self._init_optimizer(lr)
+            logger.info('Starting epoch {}, step {:,}, lr {:.8f}'.format(
+                n_epoch + 1, self.net.global_step[0], lr))
             subsample = 4  # make validation more often
             for _ in range(subsample):
                 self.train_on_images(
