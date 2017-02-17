@@ -244,8 +244,26 @@ class Conv3BN(nn.Module):
         x = self.conv(x)
         if self.bn is not None:
             x = self.bn(x)
-        x = self.activation(x)
+        x = self.activation(x, inplace=True)
         return x
+
+
+class UNet3lModule(nn.Module):
+    def __init__(self, hps: HyperParams, in_: int, out: int):
+        super().__init__()
+        self.l1 = Conv3BN(hps, in_, out)
+        self.l2 = Conv3BN(hps, out, out)
+        self.l3 = Conv3BN(hps, out, out)
+
+    def forward(self, x):
+        x = self.l1(x)
+        x = self.l2(x)
+        x = self.l3(x)
+        return x
+
+
+class UNet3l(UNet):
+    module = UNet3lModule
 
 
 class UNet2Module(nn.Module):
@@ -332,5 +350,21 @@ class InceptionModule(nn.Module):
         ], 1)
 
 
+class Inception2Module(nn.Module):
+    def __init__(self, hps: HyperParams, in_: int, out: int):
+        super().__init__()
+        self.l1 = InceptionModule(hps, in_, out)
+        self.l2 = InceptionModule(hps, out, out)
+
+    def forward(self, x):
+        x = self.l1(x)
+        x = self.l2(x)
+        return x
+
+
 class InceptionUNet(UNet):
     module = InceptionModule
+
+
+class Inception2UNet(UNet):
+    module = Inception2Module
