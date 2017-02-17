@@ -199,20 +199,22 @@ class UNetModule(nn.Module):
 
 
 class UNet(BaseNet):
+    module = UNetModule
+    filter_factors = [1, 2, 4, 8, 16]
+
     def __init__(self, hps: HyperParams):
         super().__init__(hps)
         self.pool = nn.MaxPool2d(2, 2)
-        b = hps.filters_base
-        self.filters = [b, b * 2, b * 4, b * 8, b * 16]
+        filter_sizes = [hps.filters_base * s for s in self.filter_factors]
         self.down, self.up = [], []
-        for i, nf in enumerate(self.filters):
-            low_nf = hps.n_channels if i == 0 else self.filters[i - 1]
-            self.down.append(UNetModule(hps, low_nf, nf))
+        for i, nf in enumerate(filter_sizes):
+            low_nf = hps.n_channels if i == 0 else filter_sizes[i - 1]
+            self.down.append(self.module(hps, low_nf, nf))
             setattr(self, 'down_{}'.format(i), self.down[-1])
             if i != 0:
-                self.up.append(UNetModule(hps, low_nf + nf, low_nf))
+                self.up.append(self.module(hps, low_nf + nf, low_nf))
                 setattr(self, 'conv_up_{}'.format(i), self.up[-1])
-        self.conv_final = nn.Conv2d(self.filters[0], hps.n_classes, 1)
+        self.conv_final = nn.Conv2d(filter_sizes[0], hps.n_classes, 1)
 
     def forward(self, x):
         xs = []
@@ -291,3 +293,44 @@ class UNet2(BaseNet):
         x_out = self.conv_final(x_out)
         b = self.hps.patch_border
         return F.sigmoid(x_out[:, :, b:-b, b:-b])
+
+
+class BasicConv2d(nn.Module):
+    def __init__(self, in_planes, out_planes, kernel_size, stride=1, padding=0):
+        super().__init__()
+        self.conv = nn.Conv2d(
+            in_planes, out_planes,
+            kernel_size=kernel_size, stride=stride, padding=padding, bias=False)
+        self.bn = nn.BatchNorm2d(out_planes, affine=True)
+        self.relu = nn.ReLU(inplace=True)
+
+    def forward(self, x):
+        x = self.conv(x)
+        x = self.bn(x)
+        x = self.relu(x)
+        return x
+
+
+class InceptionModule(nn.Module):
+    def __init__(self, hps: HyperParams, in_: int, out: int):
+        super().__init__()
+        out_1 = out * 3 // 8
+        out_2 = out * 2 // 8
+        self.conv1x1 = BasicConv2d(in_, out_1, kernel_size=1)
+        self.conv3x3_pre = BasicConv2d(in_, in_ // 2, kernel_size=1)
+        self.conv3x3 = BasicConv2d(in_ // 2, out_1, kernel_size=3, padding=1)
+        self.conv5x5_pre = BasicConv2d(in_, in_ // 4, kernel_size=1)
+        self.conv5x5 = BasicConv2d(in_ // 4, out_2, kernel_size=5, padding=2)
+        assert hps.bn
+        assert hps.activation == 'relu'
+
+    def forward(self, x):
+        return torch.cat([
+            self.conv1x1(x),
+            self.conv3x3(self.conv3x3_pre(x)),
+            self.conv5x5(self.conv5x5_pre(x)),
+        ], 1)
+
+
+class InceptionUNet(UNet):
+    module = InceptionModule
