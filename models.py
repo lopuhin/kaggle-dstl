@@ -21,6 +21,7 @@ class HyperParams:
 
     augment_rotations = attr.ib(default=10.0)  # degrees
     augment_flips = attr.ib(default=0)
+    augment_channels = attr.ib(default=0)
 
     validation_square = attr.ib(default=400)
 

@@ -237,6 +237,7 @@ class Model:
                 mask = im.mask[:, x - m: x + s + m, y - m: y + s + m]
                 if self.hps.dist_loss:
                     dist_mask = im.dist_mask[:, x - m: x + s + m, y - m: y + s + m]
+
                 if self.hps.augment_flips:
                     if random.random() < 0.5:
                         patch = np.flip(patch, 1)
@@ -248,6 +249,7 @@ class Model:
                         mask = np.flip(mask, 2)
                         if self.hps.dist_loss:
                             dist_mask = np.flip(dist_mask, 2)
+
                 if self.hps.augment_rotations:
                     assert self.hps.augment_rotations != 1  # old format
                     angle = (2 * random.random() - 1.) * self.hps.augment_rotations
@@ -255,6 +257,11 @@ class Model:
                     mask = utils.rotated(mask, angle)
                     if self.hps.dist_loss:
                         dist_mask = utils.rotated(dist_mask, angle)
+
+                if self.hps.augment_channels:
+                    patch = patch * np.random.normal(
+                        1, self.hps.augment_channels, patch.shape[0])
+
                 inputs.append(patch[:, m: -m, m: -m].astype(np.float32))
                 outputs.append(mask[:, m: -m, m: -m].astype(np.float32))
                 if self.hps.dist_loss:
