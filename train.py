@@ -106,12 +106,17 @@ class Model:
         return losses
 
     def train(self, logdir: Path, train_ids: List[str], valid_ids: List[str],
-              validation: str, no_mp: bool=False):
+              validation: str, no_mp: bool=False, valid_only: bool=False,
+              model_path: Path=None):
         self.tb_logger = tensorboard_logger.Logger(str(logdir))
         self.logdir = logdir
         train_images = [self.load_image(im_id) for im_id in sorted(train_ids)]
         valid_images = None
-        n_epoch = self.restore_last_snapshot(logdir)
+        if model_path:
+            self.restore_snapshot(model_path)
+            n_epoch = int(model_path.name.rsplit('-', 1)[1]) + 1
+        else:
+            n_epoch = self.restore_last_snapshot(logdir)
         square_validation = validation == 'square'
         lr = self.hps.lr
         self.optimizer = self._init_optimizer(lr)
@@ -129,13 +134,14 @@ class Model:
                     self.optimizer = self._init_optimizer(lr)
             logger.info('Starting epoch {}, step {:,}, lr {:.8f}'.format(
                 n_epoch + 1, self.net.global_step[0], lr))
-            subsample = 4  # make validation more often
+            subsample = 1 if valid_only else 4  # make validation more often
             for _ in range(subsample):
-                self.train_on_images(
-                    train_images,
-                    subsample=subsample,
-                    square_validation=square_validation,
-                    no_mp=no_mp)
+                if not valid_only:
+                    self.train_on_images(
+                        train_images,
+                        subsample=subsample,
+                        square_validation=square_validation,
+                        no_mp=no_mp)
                 if valid_images is None:
                     if square_validation:
                         s = self.hps.validation_square
@@ -149,6 +155,8 @@ class Model:
                     self.validate_on_images(
                         valid_images,
                         subsample=1 if square_validation else subsample)
+            if valid_only:
+                break
             self.save_snapshot(n_epoch)
         self.tb_logger = None
         self.logdir = None
@@ -539,16 +547,18 @@ class Model:
 def main():
     parser = argparse.ArgumentParser()
     arg = parser.add_argument
-    arg('logdir', type=str, help='Path to log directory')
-    arg('--hps', type=str, help='Change hyperparameters in k1=v1,k2=v2 format')
+    arg('logdir', help='Path to log directory')
+    arg('--hps', help='Change hyperparameters in k1=v1,k2=v2 format')
     arg('--all', action='store_true',
         help='Train on all images without validation')
     arg('--validation', choices=['random', 'stratified', 'square', 'custom'],
         default='custom', help='validation strategy')
-    arg('--only', type=str,
+    arg('--valid-only', action='store_true')
+    arg('--only',
         help='Train on this image ids only (comma-separated) without validation')
     arg('--clean', action='store_true', help='Clean logdir')
     arg('--no-mp', action='store_true', help='Disable multiprocessing')
+    arg('--model-path', type=Path)
     args = parser.parse_args()
 
     logdir = Path(args.logdir)
@@ -598,6 +608,9 @@ def main():
     else:
         raise ValueError('Unexpected validation kind: {}'.format(args.validation))
 
+    if args.valid_only:
+        train_ids = []
+
     logger.info('Train: {}'.format(' '.join(sorted(train_ids))))
     logger.info('Valid: {}'.format(' '.join(sorted(valid_ids))))
     logger.info('Train area mean: {}'.format(
@@ -610,6 +623,8 @@ def main():
                 valid_ids=valid_ids,
                 validation=args.validation,
                 no_mp=args.no_mp,
+                valid_only=args.valid_only,
+                model_path=args.model_path
                 )
 
 
