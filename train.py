@@ -86,22 +86,31 @@ class Model:
                ys: torch.FloatTensor,
                ys_dist: torch.FloatTensor,
                y_preds: Variable):
+        hps = self.hps
         losses = []
         ys = self._var(ys)
-        if self.hps.dist_loss:
+        if hps.dist_loss:
             ys_dist = self._var(ys_dist)
-        for cls_idx in range(self.hps.n_classes):
+        for cls_idx in range(hps.n_classes):
             y, y_pred = ys[:, cls_idx], y_preds[:, cls_idx]
-            loss = self.bce_loss(y_pred, y)
-            if self.hps.dice_loss:
+            loss = 0.
+            if hps.log_loss:
+                loss += self.bce_loss(y_pred, y) * hps.log_loss
+            if hps.dice_loss:
                 intersection = (y_pred * y).sum()
                 uwi = y_pred.sum() + y.sum()  # without intersection union
                 if uwi[0] != 0:
-                    loss += (1 - intersection / uwi) * self.hps.dice_loss
-            if self.hps.dist_loss:
+                    loss += (1 - intersection / uwi) * hps.dice_loss
+            if hps.jaccard_loss:
+                intersection = (y_pred * y).sum()
+                union = y_pred.sum() + y.sum() - intersection
+                if union[0] != 0:
+                    loss += (1 - intersection / union) * hps.jaccard_loss
+            if hps.dist_loss:
                 loss += (self.mse_loss(y_pred, ys_dist[:, cls_idx]) *
-                         self.hps.dist_loss)
-            loss /= 1 + self.hps.dist_loss + self.hps.dice_loss
+                         hps.dist_loss)
+            loss /= (hps.log_loss + hps.dist_loss + hps.dice_loss +
+                     hps.jaccard_loss)
             losses.append(loss)
         return losses
 
@@ -259,8 +268,9 @@ class Model:
                         dist_mask = utils.rotated(dist_mask, angle)
 
                 if self.hps.augment_channels:
-                    patch = patch * np.random.normal(
+                    ch_shift = np.random.normal(
                         1, self.hps.augment_channels, patch.shape[0])
+                    patch = patch * ch_shift[:, None, None]
 
                 inputs.append(patch[:, m: -m, m: -m].astype(np.float32))
                 outputs.append(mask[:, m: -m, m: -m].astype(np.float32))

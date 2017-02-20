@@ -21,14 +21,16 @@ class HyperParams:
 
     augment_rotations = attr.ib(default=10.0)  # degrees
     augment_flips = attr.ib(default=0)
-    augment_channels = attr.ib(default=0)
+    augment_channels = attr.ib(default=0.0)
 
     validation_square = attr.ib(default=400)
 
     dropout = attr.ib(default=0.0)
     bn = attr.ib(default=1)
     activation = attr.ib(default='relu')
+    log_loss = attr.ib(default=1.0)
     dice_loss = attr.ib(default=0.0)
+    jaccard_loss = attr.ib(default=0.0)
     dist_loss = attr.ib(default=0.0)
 
     filters_base = attr.ib(default=32)
