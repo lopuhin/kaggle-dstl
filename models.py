@@ -64,7 +64,7 @@ class HyperParams:
                     if isinstance(default, (int, float, str)):
                         v = type(default)(v)
                     elif isinstance(default, list):
-                        v = [int(x) for x in v.split('-')]
+                        v = [type(default[0])(x) for x in v.split('-')]
                     setattr(self, field.name, v)
             if values:
                 raise ValueError('Unknown hyperparams: {}'.format(values))
