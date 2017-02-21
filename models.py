@@ -371,3 +371,45 @@ class InceptionUNet(UNet):
 
 class Inception2UNet(UNet):
     module = Inception2Module
+
+
+class SimpleSegNet(BaseNet):
+    def __init__(self, hps):
+        super().__init__(hps)
+        s = hps.filters_base
+        self.pool = nn.MaxPool2d(2, 2)
+        self.input_conv = BasicConv2d(hps.n_channels, s, 1)
+        self.enc_1 = BasicConv2d(s * 1, s * 2, 3, padding=1)
+        self.enc_2 = BasicConv2d(s * 2, s * 4, 3, padding=1)
+        self.enc_3 = BasicConv2d(s * 4, s * 8, 3, padding=1)
+        self.enc_4 = BasicConv2d(s * 8, s * 8, 3, padding=1)
+        # https://github.com/pradyu1993/segnet - decoder lacks relu (???)
+        self.dec_4 = BasicConv2d(s * 8, s * 8, 3, padding=1)
+        self.dec_3 = BasicConv2d(s * 8, s * 4, 3, padding=1)
+        self.dec_2 = BasicConv2d(s * 4, s * 2, 3, padding=1)
+        self.dec_1 = BasicConv2d(s * 2, s * 1, 3, padding=1)
+        self.conv_final = nn.Conv2d(s, hps.n_classes, 1)
+
+    def forward(self, x):
+        # Input
+        x = self.input_conv(x)
+        # Encoder
+        x = self.enc_1(x)
+        x = self.pool(x)
+        x = self.enc_2(x)
+        x = self.pool(x)
+        x = self.enc_3(x)
+        x = self.pool(x)
+        x = self.enc_4(x)
+        # Decoder
+        x = self.dec_4(x)
+        x = upsample2d(x)
+        x = self.dec_3(x)
+        x = upsample2d(x)
+        x = self.dec_2(x)
+        x = upsample2d(x)
+        x = self.dec_1(x)
+        # Output
+        x = self.conv_final(x)
+        b = self.hps.patch_border
+        return F.sigmoid(x[:, :, b:-b, b:-b])
