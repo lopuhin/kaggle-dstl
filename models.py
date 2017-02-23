@@ -494,47 +494,45 @@ class DenseNet(BaseNet):
     def __init__(self, hps):
         super().__init__(hps)
         k = hps.filters_base
-        block_1_in = 3 * k
-        block_1_layers = 3
-        block_2_in = 8 * k
-        block_2_layers = 5
-        block_3_in = 16 * k
-        block_3_layers = 7
-        block_4_in = 8 * k
-        block_4_layers = 5
-        block_5_in = 4 * k
-        block_5_layers = 3
+        block_layers = [3, 5, 7, 5, 3]
+        block_in = [n * k for n in [3, 8, 16, 8, 4]]
         dense = partial(DenseBlock, dropout=hps.dropout, bn=hps.bn)
-        self.input_conv = nn.Conv2d(hps.n_channels, block_1_in, 3, padding=1)
-        self.block_1 = dense(block_1_in, k, block_1_layers)
-        self.down_1 = DownBlock(
-            self.block_1.out + block_1_in, block_2_in, hps.dropout)
-        self.block_2 = dense(block_2_in, k, block_2_layers)
-        self.down_2 = DownBlock(
-            self.block_2.out + block_2_in, block_3_in, hps.dropout)
-        self.block_3 = dense(block_3_in, k, block_3_layers)
-        self.up_3 = UpBlock(self.block_3.out, block_4_in)
-        self.block_4 = dense(block_4_in + self.down_2.in_, k, block_4_layers)
-        self.up_4 = UpBlock(self.block_4.out, block_5_in)
-        self.block_5 = dense(block_5_in + self.down_1.in_, k, block_5_layers)
-        self.output_conv = nn.Conv2d(self.block_5.out, hps.n_classes, 1)
+        self.input_conv = nn.Conv2d(hps.n_channels, block_in[0], 3, padding=1)
+        self.blocks = []
+        self.scales = []
+        self.n_layers = len(block_layers) // 2
+        for i, (in_, l) in enumerate(zip(block_in, block_layers)):
+            if i < self.n_layers:
+                block = dense(in_, k, l)
+                scale = DownBlock(block.out + in_, block_in[i + 1], hps.dropout)
+            elif i == self.n_layers:
+                block = dense(in_, k, l)
+                scale = None
+            else:
+                block = dense(in_ + self.scales[2 * self.n_layers - i].in_,
+                              k, l)
+                scale = UpBlock(self.blocks[-1].out, in_)
+            setattr(self, 'block_{}'.format(i), block)
+            setattr(self, 'scale_{}'.format(i), scale)
+            self.blocks.append(block)
+            self.scales.append(scale)
+        self.output_conv = nn.Conv2d(self.blocks[-1].out, hps.n_classes, 1)
 
     def forward(self, x):
         # Input
         x = self.input_conv(x)
         # Network
-        block_1_out = self.block_1(x)
-        block_1_out = concat([block_1_out, x])
-        block_2_in = self.down_1(block_1_out)
-        block_2_out = self.block_2(block_2_in)
-        block_2_out = concat([block_2_out, block_2_in])
-        block_3_in = self.down_2(block_2_out)
-        block_3_out = self.block_3(block_3_in)
-        block_4_in = concat([self.up_3(block_3_out), block_2_out])
-        block_4_out = self.block_4(block_4_in)
-        block_5_in = concat([self.up_4(block_4_out), block_1_out])
-        block_5_out = self.block_5(block_5_in)
+        skips = []
+        for i, (block, scale) in enumerate(zip(self.blocks, self.scales)):
+            if i < self.n_layers:
+                x = concat([block(x), x])
+                skips.append(x)
+                x = scale(x)
+            elif i == self.n_layers:
+                x = block(x)
+            else:
+                x = block(concat([scale(x), skips[2 * self.n_layers - i]]))
         # Output
-        x = self.output_conv(block_5_out)
+        x = self.output_conv(x)
         b = self.hps.patch_border
         return F.sigmoid(x[:, :, b:-b, b:-b])
