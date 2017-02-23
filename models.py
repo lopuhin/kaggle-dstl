@@ -420,9 +420,9 @@ class SimpleSegNet(BaseNet):
 
 
 class DenseLayer(nn.Module):
-    def __init__(self, in_, out, dropout, bn):
+    def __init__(self, in_, out, *, dropout, bn):
         super().__init__()
-        self.bn = nn.BatchNorm2d(in_) if bn else None
+        self.bn = nn.BatchNorm2d(in_, affine=False) if bn else None
         self.activation = nn.ReLU(inplace=True)
         self.conv = conv3x3(in_, out)
         self.dropout = nn.Dropout2d(p=dropout) if dropout else None
@@ -459,17 +459,18 @@ class DenseBlock(nn.Module):
 
 
 class DownBlock(nn.Module):
-    def __init__(self, in_, out, dropout):
+    def __init__(self, in_, out, *, dropout, bn):
         super().__init__()
         self.in_ = in_
-        self.bn = nn.BatchNorm2d(in_)
+        self.bn = nn.BatchNorm2d(in_, affine=False) if bn else None
         self.activation = nn.ReLU(inplace=True)
         self.conv = nn.Conv2d(in_, out, 1)
         self.dropout = nn.Dropout2d(p=dropout) if dropout else None
         self.pool = nn.MaxPool2d(2, 2)
 
     def forward(self, x):
-        x = self.bn(x)
+        if self.bn is not None:
+            x = self.bn(x)
         x = self.activation(x)
         x = self.conv(x)
         if self.dropout is not None:
@@ -504,7 +505,8 @@ class DenseNet(BaseNet):
         for i, (in_, l) in enumerate(zip(block_in, block_layers)):
             if i < self.n_layers:
                 block = dense(in_, k, l)
-                scale = DownBlock(block.out + in_, block_in[i + 1], hps.dropout)
+                scale = DownBlock(block.out + in_, block_in[i + 1],
+                                  dropout=hps.dropout, bn=hps.bn)
             elif i == self.n_layers:
                 block = dense(in_, k, l)
                 scale = None
