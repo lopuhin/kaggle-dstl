@@ -88,6 +88,10 @@ def conv3x3(in_, out):
     return nn.Conv2d(in_, out, 3, padding=1)
 
 
+def concat(xs):
+    return torch.cat(xs, 1)
+
+
 class MiniNet(BaseNet):
     def __init__(self, hps):
         super().__init__(hps)
@@ -411,5 +415,118 @@ class SimpleSegNet(BaseNet):
         x = self.dec_1(x)
         # Output
         x = self.conv_final(x)
+        b = self.hps.patch_border
+        return F.sigmoid(x[:, :, b:-b, b:-b])
+
+
+class DenseLayer(nn.Module):
+    def __init__(self, in_, out):
+        super().__init__()
+        self.bn = nn.BatchNorm2d(in_)
+        self.conv = conv3x3(in_, out)
+        self.activation = nn.ReLU(inplace=True)
+        # TODO - dropout
+
+    def forward(self, x):
+        x = self.bn(x)
+        x = self.conv(x)
+        x = self.activation(x)
+        return x
+
+
+class DenseBlock(nn.Module):
+    def __init__(self, in_, k, n_layers):
+        super().__init__()
+        self.out = k * n_layers
+        layer_in = in_
+        self.layers = []
+        for i in range(n_layers):
+            layer = DenseLayer(layer_in, k)
+            self.layers.append(layer)
+            setattr(self, 'layer_{}'.format(i), layer)
+            layer_in += k
+
+    def forward(self, x):
+        inputs = [x]
+        outputs = []
+        for i, layer in enumerate(self.layers[:-1]):
+            outputs.append(layer(inputs[i]))
+            inputs.append(concat([outputs[i], inputs[i]]))
+        return torch.cat([self.layers[-1](inputs[-1])] + outputs, 1)
+
+
+class DownBlock(nn.Module):
+    def __init__(self, in_, out):
+        super().__init__()
+        self.in_ = in_
+        self.bn = nn.BatchNorm2d(in_)
+        self.activation = nn.ReLU(inplace=True)
+        self.conv = nn.Conv2d(in_, out, 1)
+        self.pool = nn.MaxPool2d(2, 2)
+        # TODO - dropout
+
+    def forward(self, x):
+        x = self.bn(x)
+        x = self.activation(x)
+        x = self.conv(x)
+        x = self.pool(x)
+        return x
+
+
+class UpBlock(nn.Module):
+    def __init__(self, in_, out):
+        super().__init__()
+        self.up_conv = nn.ConvTranspose2d(in_, out, 3, stride=2, padding=1)
+
+    def forward(self, x):
+        w, h = x.size()[-2:]
+        return self.up_conv(x, output_size=(2 * w, 2 * h))
+
+
+class DenseNet(BaseNet):
+    """ https://arxiv.org/pdf/1611.09326v2.pdf
+    """
+    def __init__(self, hps):
+        super().__init__(hps)
+        k = hps.filters_base
+        block_1_in = 3 * k
+        block_1_layers = 3
+        block_2_in = 8 * k
+        block_2_layers = 5
+        block_3_in = 16 * k
+        block_3_layers = 7
+        block_4_in = 8 * k
+        block_4_layers = 5
+        block_5_in = 4 * k
+        block_5_layers = 3
+        self.input_conv = nn.Conv2d(hps.n_channels, block_1_in, 3, padding=1)
+        self.block_1 = DenseBlock(block_1_in, k, block_1_layers)
+        self.down_1 = DownBlock(self.block_1.out + block_1_in, block_2_in)
+        self.block_2 = DenseBlock(block_2_in, k, block_2_layers)
+        self.down_2 = DownBlock(self.block_2.out + block_2_in, block_3_in)
+        self.block_3 = DenseBlock(block_3_in, k, block_3_layers)
+        self.up_3 = UpBlock(self.block_3.out, block_4_in)
+        self.block_4 = DenseBlock(block_4_in + self.down_2.in_, k, block_4_layers)
+        self.up_4 = UpBlock(self.block_4.out, block_5_in)
+        self.block_5 = DenseBlock(block_5_in + self.down_1.in_, k, block_5_layers)
+        self.output_conv = nn.Conv2d(self.block_5.out, hps.n_classes, 1)
+
+    def forward(self, x):
+        # Input
+        x = self.input_conv(x)
+        # Network
+        block_1_out = self.block_1(x)
+        block_1_out = concat([block_1_out, x])
+        block_2_in = self.down_1(block_1_out)
+        block_2_out = self.block_2(block_2_in)
+        block_2_out = concat([block_2_out, block_2_in])
+        block_3_in = self.down_2(block_2_out)
+        block_3_out = self.block_3(block_3_in)
+        block_4_in = concat([self.up_3(block_3_out), block_2_out])
+        block_4_out = self.block_4(block_4_in)
+        block_5_in = concat([self.up_4(block_4_out), block_1_out])
+        block_5_out = self.block_5(block_5_in)
+        # Output
+        x = self.output_conv(block_5_out)
         b = self.hps.patch_border
         return F.sigmoid(x[:, :, b:-b, b:-b])
