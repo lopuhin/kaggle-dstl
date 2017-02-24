@@ -326,7 +326,7 @@ class BasicConv2d(nn.Module):
         self.conv = nn.Conv2d(
             in_planes, out_planes,
             kernel_size=kernel_size, stride=stride, padding=padding, bias=False)
-        self.bn = nn.BatchNorm2d(out_planes, affine=True)
+        self.bn = nn.BatchNorm2d(out_planes)
         self.relu = nn.ReLU(inplace=True)
 
     def forward(self, x):
@@ -422,7 +422,7 @@ class SimpleSegNet(BaseNet):
 class DenseLayer(nn.Module):
     def __init__(self, in_, out, *, dropout, bn):
         super().__init__()
-        self.bn = nn.BatchNorm2d(in_, affine=False) if bn else None
+        self.bn = nn.BatchNorm2d(in_) if bn else None
         self.activation = nn.ReLU(inplace=True)
         self.conv = conv3x3(in_, out)
         self.dropout = nn.Dropout2d(p=dropout) if dropout else None
@@ -462,7 +462,7 @@ class DownBlock(nn.Module):
     def __init__(self, in_, out, *, dropout, bn):
         super().__init__()
         self.in_ = in_
-        self.bn = nn.BatchNorm2d(in_, affine=False) if bn else None
+        self.bn = nn.BatchNorm2d(in_) if bn else None
         self.activation = nn.ReLU(inplace=True)
         self.conv = nn.Conv2d(in_, out, 1)
         self.dropout = nn.Dropout2d(p=dropout) if dropout else None
