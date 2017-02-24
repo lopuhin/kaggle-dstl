@@ -491,8 +491,8 @@ class DenseNet(BaseNet):
     def __init__(self, hps):
         super().__init__(hps)
         k = hps.filters_base
-        block_layers = [3, 5, 7, 5, 3]
-        block_in = [n * k for n in [3, 8, 16, 8, 4]]
+        block_layers = [3, 5, 5, 5, 5, 5, 3]
+        block_in = [n * k for n in [4, 8, 16, 16, 16, 8, 4]]
         dense = partial(DenseBlock, dropout=hps.dropout, bn=hps.bn)
         self.input_conv = nn.Conv2d(hps.n_channels, block_in[0], 3, padding=1)
         self.blocks = []
