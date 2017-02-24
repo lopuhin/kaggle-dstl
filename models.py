@@ -143,14 +143,6 @@ class SmallNet(BaseNet):
         return F.sigmoid(x[:, :, b:-b, b:-b])
 
 
-def upsample2d(x):
-    # repeat is missing: https://github.com/pytorch/pytorch/issues/440
-    # return x.repeat(1, 1, 2, 2)
-    x = torch.stack([x[:, :, i // 2, :] for i in range(x.size()[2] * 2)], 2)
-    x = torch.stack([x[:, :, :, i // 2] for i in range(x.size()[3] * 2)], 3)
-    return x
-
-
 # UNet:
 # http://lmb.informatik.uni-freiburg.de/people/ronneber/u-net/u-net-architecture.png
 
@@ -161,6 +153,7 @@ class SmallUNet(BaseNet):
         self.conv1 = nn.Conv2d(hps.n_channels, 32, 3, padding=1)
         self.conv2 = nn.Conv2d(32, 32, 3, padding=1)
         self.pool = nn.MaxPool2d(2, 2)
+        self.upsample = nn.UpsamplingNearest2d(scale_factor=2)
         self.conv3 = nn.Conv2d(32, 64, 3, padding=1)
         self.conv4 = nn.Conv2d(64, 64, 3, padding=1)
         self.conv5 = nn.Conv2d(64, 32, 3, padding=1)
@@ -174,7 +167,7 @@ class SmallUNet(BaseNet):
         x1 = F.relu(self.conv3(x1))
         x1 = F.relu(self.conv4(x1))
         x1 = F.relu(self.conv5(x1))
-        x1 = upsample2d(x1)
+        x1 = self.upsample(x1)
         x = torch.cat([x, x1], 1)
         x = F.relu(self.conv6(x))
         x = self.conv7(x)
@@ -212,6 +205,7 @@ class UNet(BaseNet):
     def __init__(self, hps: HyperParams):
         super().__init__(hps)
         self.pool = nn.MaxPool2d(2, 2)
+        self.upsample = nn.UpsamplingNearest2d(scale_factor=2)
         filter_sizes = [hps.filters_base * s for s in self.filter_factors]
         self.down, self.up = [], []
         for i, nf in enumerate(filter_sizes):
@@ -232,7 +226,7 @@ class UNet(BaseNet):
 
         x_out = xs[-1]
         for x_skip, up in reversed(list(zip(xs[:-1], self.up))):
-            x_out = up(torch.cat([upsample2d(x_out), x_skip], 1))
+            x_out = up(torch.cat([self.upsample(x_out), x_skip], 1))
             x_out = self.dropout2d(x_out)
 
         x_out = self.conv_final(x_out)
@@ -290,6 +284,7 @@ class UNet2(BaseNet):
         super().__init__(hps)
         b = hps.filters_base
         self.filters = [b * 2, b * 2, b * 4, b * 8, b * 16]
+        self.upsample = nn.UpsamplingNearest2d(scale_factor=2)
         self.down, self.down_pool, self.mid, self.up = [[] for _ in range(4)]
         for i, nf in enumerate(self.filters):
             low_nf = hps.n_channels if i == 0 else self.filters[i - 1]
@@ -313,7 +308,7 @@ class UNet2(BaseNet):
 
         x_out = xs[-1]
         for x_skip, up, mid in reversed(list(zip(xs[:-1], self.up, self.mid))):
-            x_out = up(torch.cat([upsample2d(x_out), mid(x_skip)], 1))
+            x_out = up(torch.cat([self.upsample(x_out), mid(x_skip)], 1))
 
         x_out = self.conv_final(x_out)
         b = self.hps.patch_border
@@ -382,6 +377,7 @@ class SimpleSegNet(BaseNet):
         super().__init__(hps)
         s = hps.filters_base
         self.pool = nn.MaxPool2d(2, 2)
+        self.upsample = nn.UpsamplingNearest2d(scale_factor=2)
         self.input_conv = BasicConv2d(hps.n_channels, s, 1)
         self.enc_1 = BasicConv2d(s * 1, s * 2, 3, padding=1)
         self.enc_2 = BasicConv2d(s * 2, s * 4, 3, padding=1)
@@ -407,11 +403,11 @@ class SimpleSegNet(BaseNet):
         x = self.enc_4(x)
         # Decoder
         x = self.dec_4(x)
-        x = upsample2d(x)
+        x = self.upsample(x)
         x = self.dec_3(x)
-        x = upsample2d(x)
+        x = self.upsample(x)
         x = self.dec_2(x)
-        x = upsample2d(x)
+        x = self.upsample(x)
         x = self.dec_1(x)
         # Output
         x = self.conv_final(x)
@@ -428,9 +424,9 @@ class DenseLayer(nn.Module):
         self.dropout = nn.Dropout2d(p=dropout) if dropout else None
 
     def forward(self, x):
+        x = self.activation(x)
         if self.bn is not None:
             x = self.bn(x)
-        x = self.activation(x)
         x = self.conv(x)
         if self.dropout is not None:
             x = self.dropout(x)
@@ -482,11 +478,11 @@ class DownBlock(nn.Module):
 class UpBlock(nn.Module):
     def __init__(self, in_, out):
         super().__init__()
-        self.up_conv = nn.ConvTranspose2d(in_, out, 3, stride=2, padding=1)
+        self.up_conv = nn.Conv2d(in_, out, 1)
+        self.upsample = nn.UpsamplingNearest2d(scale_factor=2)
 
     def forward(self, x):
-        w, h = x.size()[-2:]
-        return self.up_conv(x, output_size=(2 * w, 2 * h))
+        return self.upsample(self.up_conv(x))
 
 
 class DenseNet(BaseNet):
