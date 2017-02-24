@@ -86,33 +86,36 @@ class Model:
                ys: torch.FloatTensor,
                ys_dist: torch.FloatTensor,
                y_preds: Variable):
-        hps = self.hps
         losses = []
         ys = self._var(ys)
-        if hps.dist_loss:
+        if self.hps.dist_loss:
             ys_dist = self._var(ys_dist)
-        for cls_idx in range(hps.n_classes):
+        for cls_idx, _ in enumerate(self.hps.classes):
             y, y_pred = ys[:, cls_idx], y_preds[:, cls_idx]
-            loss = 0.
-            if hps.log_loss:
-                loss += self.bce_loss(y_pred, y) * hps.log_loss
-            if hps.dice_loss:
-                intersection = (y_pred * y).sum()
-                uwi = y_pred.sum() + y.sum()  # without intersection union
-                if uwi[0] != 0:
-                    loss += (1 - intersection / uwi) * hps.dice_loss
-            if hps.jaccard_loss:
-                intersection = (y_pred * y).sum()
-                union = y_pred.sum() + y.sum() - intersection
-                if union[0] != 0:
-                    loss += (1 - intersection / union) * hps.jaccard_loss
-            if hps.dist_loss:
-                loss += (self.mse_loss(y_pred, ys_dist[:, cls_idx]) *
-                         hps.dist_loss)
-            loss /= (hps.log_loss + hps.dist_loss + hps.dice_loss +
-                     hps.jaccard_loss)
+            y_dist = ys_dist[:, cls_idx] if self.hps.dist_loss else None
+            loss = self._cls_loss(y, y_dist, y_pred)
             losses.append(loss)
         return losses
+
+    def _cls_loss(self, y, y_dist, y_pred):
+        hps = self.hps
+        loss = 0.
+        if hps.log_loss:
+            loss += self.bce_loss(y_pred, y) * hps.log_loss
+        if hps.dice_loss:
+            intersection = (y_pred * y).sum()
+            uwi = y_pred.sum() + y.sum()  # without intersection union
+            if uwi[0] != 0:
+                loss += (1 - intersection / uwi) * hps.dice_loss
+        if hps.jaccard_loss:
+            intersection = (y_pred * y).sum()
+            union = y_pred.sum() + y.sum() - intersection
+            if union[0] != 0:
+                loss += (1 - intersection / union) * hps.jaccard_loss
+        if hps.dist_loss:
+            loss += self.mse_loss(y_pred, y_dist) * hps.dist_loss
+        loss /= hps.log_loss + hps.dist_loss + hps.dice_loss + hps.jaccard_loss
+        return loss
 
     def train(self, logdir: Path, train_ids: List[str], valid_ids: List[str],
               validation: str, no_mp: bool=False, valid_only: bool=False,
@@ -143,7 +146,7 @@ class Model:
                     self.optimizer = self._init_optimizer(lr)
             logger.info('Starting epoch {}, step {:,}, lr {:.8f}'.format(
                 n_epoch + 1, self.net.global_step[0], lr))
-            subsample = 1 if valid_only else 4  # make validation more often
+            subsample = 1 if valid_only else 2  # make validation more often
             for _ in range(subsample):
                 if not valid_only:
                     self.train_on_images(
@@ -161,9 +164,7 @@ class Model:
                         valid_images = [self.load_image(im_id)
                                         for im_id in sorted(valid_ids)]
                 if valid_images:
-                    self.validate_on_images(
-                        valid_images,
-                        subsample=1 if square_validation else subsample)
+                    self.validate_on_images(valid_images, subsample=1)
             if valid_only:
                 break
             self.save_snapshot(n_epoch)
@@ -312,7 +313,7 @@ class Model:
                 ))
 
         t0 = t00 = time.time()
-        log_step = 100
+        log_step = 50
         im_log_step = n_batches // log_step * log_step
         map_ = (map if no_mp else
                 partial(utils.imap_fixed_output_buffer, threads=4))
