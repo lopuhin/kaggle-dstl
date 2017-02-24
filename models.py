@@ -455,14 +455,14 @@ class DenseBlock(nn.Module):
 
 
 class DownBlock(nn.Module):
-    def __init__(self, in_, out, *, dropout, bn):
+    def __init__(self, in_, out, scale, *, dropout, bn):
         super().__init__()
         self.in_ = in_
         self.bn = nn.BatchNorm2d(in_) if bn else None
         self.activation = nn.ReLU(inplace=True)
         self.conv = nn.Conv2d(in_, out, 1)
         self.dropout = nn.Dropout2d(p=dropout) if dropout else None
-        self.pool = nn.MaxPool2d(2, 2)
+        self.pool = nn.MaxPool2d(scale, scale)
 
     def forward(self, x):
         if self.bn is not None:
@@ -476,10 +476,10 @@ class DownBlock(nn.Module):
 
 
 class UpBlock(nn.Module):
-    def __init__(self, in_, out):
+    def __init__(self, in_, out, scale):
         super().__init__()
         self.up_conv = nn.Conv2d(in_, out, 1)
-        self.upsample = nn.UpsamplingNearest2d(scale_factor=2)
+        self.upsample = nn.UpsamplingNearest2d(scale_factor=scale)
 
     def forward(self, x):
         return self.upsample(self.up_conv(x))
@@ -493,6 +493,7 @@ class DenseNet(BaseNet):
         k = hps.filters_base
         block_layers = [3, 5, 7, 5, 3]
         block_in = [n * k for n in [3, 8, 16, 8, 4]]
+        scale_factors = [4, 2]
         dense = partial(DenseBlock, dropout=hps.dropout, bn=hps.bn)
         self.input_conv = nn.Conv2d(hps.n_channels, block_in[0], 3, padding=1)
         self.blocks = []
@@ -502,6 +503,7 @@ class DenseNet(BaseNet):
             if i < self.n_layers:
                 block = dense(in_, k, l)
                 scale = DownBlock(block.out + in_, block_in[i + 1],
+                                  scale_factors[i],
                                   dropout=hps.dropout, bn=hps.bn)
             elif i == self.n_layers:
                 block = dense(in_, k, l)
@@ -509,7 +511,8 @@ class DenseNet(BaseNet):
             else:
                 block = dense(in_ + self.scales[2 * self.n_layers - i].in_,
                               k, l)
-                scale = UpBlock(self.blocks[-1].out, in_)
+                scale = UpBlock(self.blocks[-1].out, in_,
+                                scale_factors[2 * self.n_layers - i])
             setattr(self, 'block_{}'.format(i), block)
             setattr(self, 'scale_{}'.format(i), scale)
             self.blocks.append(block)
