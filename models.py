@@ -41,6 +41,7 @@ class HyperParams:
     oversample = attr.ib(default=0.0)
     lr = attr.ib(default=0.0001)
     lr_decay = attr.ib(default=0.0)
+    weight_decay = attr.ib(default=0.0)
     batch_size = attr.ib(default=128)
 
     @property

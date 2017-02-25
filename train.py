@@ -64,7 +64,8 @@ class Model:
             self.net.cuda()
 
     def _init_optimizer(self, lr):
-        return optim.Adam(self.net.parameters(), lr=lr)
+        return optim.Adam(self.net.parameters(),
+                          lr=lr, weight_decay=self.hps.weight_decay)
 
     def _var(self, x: torch.FloatTensor) -> Variable:
         return Variable(x.cuda() if self.on_gpu else x)
