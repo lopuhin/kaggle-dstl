@@ -74,13 +74,14 @@ class Model:
         y_pred = self.net(self._var(x))
         batch_size = x.size()[0]
         losses = self.losses(y, dist_y, y_pred)
+        cls_losses = [float(l.data[0]) for l in losses]
         loss = losses[0]
         for l in losses[1:]:
             loss += l
         (loss * batch_size).backward()
         self.optimizer.step()
         self.net.global_step += 1
-        return losses
+        return cls_losses
 
     def losses(self,
                ys: torch.FloatTensor,
@@ -334,7 +335,7 @@ class Model:
                         x.numpy(), y.numpy(), dist_y.numpy(), pred_y.numpy())
             step_losses = self.train_step(x, y, dist_y)
             for ls, l in zip(losses, step_losses):
-                ls.append(l.data[0])
+                ls.append(l)
             t1 = time.time()
             dt = t1 - t0
             if dt > 10:
