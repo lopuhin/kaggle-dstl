@@ -6,7 +6,7 @@ from pathlib import Path
 from pprint import pprint
 import random
 import time
-from typing import List
+from typing import List, Iterable
 
 import attr
 import cv2
@@ -495,17 +495,32 @@ class Model:
         self._log_jaccard(jaccard_stats, prefix='valid-')
 
     def restore_last_snapshot(self, logdir: Path) -> int:
+        average = 1  # TODO - pass
         for n_epoch in reversed(range(self.hps.n_epochs)):
             model_path = self._model_path(logdir, n_epoch)
             if model_path.exists():
-                logger.info('Loading snapshot {}'.format(model_path))
-                self.restore_snapshot(model_path)
+                if average and average > 1:
+                    self.restore_average_snapshot(
+                        logdir, range(n_epoch - average + 1, n_epoch + 1))
+                else:
+                    self.restore_snapshot(model_path)
                 return n_epoch + 1
         return 0
 
     def restore_snapshot(self, model_path: Path):
+        logger.info('Loading snapshot {}'.format(model_path))
         state = torch.load(str(model_path))
         self.net.load_state_dict(state)
+
+    def restore_average_snapshot(self, logdir: Path, epochs: Iterable[int]):
+        epochs = list(epochs)
+        logger.info('Loading averaged snapshot {} for epochs {}'
+                    .format(logdir, epochs))
+        states = [torch.load(str(self._model_path(logdir, n)))
+                  for n in epochs]
+        average_state = {key: sum(s[key] for s in states) / len(states)
+                         for key in states[0].keys()}
+        self.net.load_state_dict(average_state)
 
     def save_snapshot(self, n_epoch: int):
         model_path = self._model_path(self.logdir, n_epoch)
