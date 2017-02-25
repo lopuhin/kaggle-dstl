@@ -29,6 +29,7 @@ class HyperParams:
     dropout = attr.ib(default=0.0)
     bn = attr.ib(default=1)
     activation = attr.ib(default='relu')
+    top_scale = attr.ib(default=2)
     log_loss = attr.ib(default=1.0)
     dice_loss = attr.ib(default=0.0)
     jaccard_loss = attr.ib(default=0.0)
@@ -205,7 +206,9 @@ class UNet(BaseNet):
     def __init__(self, hps: HyperParams):
         super().__init__(hps)
         self.pool = nn.MaxPool2d(2, 2)
+        self.pool_top = nn.MaxPool2d(hps.top_scale, hps.top_scale)
         self.upsample = nn.UpsamplingNearest2d(scale_factor=2)
+        self.upsample_top = nn.UpsamplingNearest2d(scale_factor=hps.top_scale)
         filter_sizes = [hps.filters_base * s for s in self.filter_factors]
         self.down, self.up = [], []
         for i, nf in enumerate(filter_sizes):
@@ -220,13 +223,20 @@ class UNet(BaseNet):
     def forward(self, x):
         xs = []
         for i, down in enumerate(self.down):
-            x_out = down(self.pool(xs[-1]) if xs else x)
+            if i == 0:
+                x_in = x
+            elif i == 1:
+                x_in = self.pool_top(xs[-1])
+            else:
+                x_in = self.pool(xs[-1])
+            x_out = down(x_in)
             x_out = self.dropout2d(x_out)
             xs.append(x_out)
 
         x_out = xs[-1]
-        for x_skip, up in reversed(list(zip(xs[:-1], self.up))):
-            x_out = up(torch.cat([self.upsample(x_out), x_skip], 1))
+        for i, (x_skip, up) in reversed(list(enumerate(zip(xs[:-1], self.up)))):
+            upsample = self.upsample_top if i == 0 else self.upsample
+            x_out = up(torch.cat([upsample(x_out), x_skip], 1))
             x_out = self.dropout2d(x_out)
 
         x_out = self.conv_final(x_out)
