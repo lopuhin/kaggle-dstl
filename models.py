@@ -464,6 +464,17 @@ class DenseBlock(nn.Module):
         return torch.cat([self.layers[-1](inputs[-1])] + outputs, 1)
 
 
+class DenseUNetModule(DenseBlock):
+    def __init__(self, hps: HyperParams, in_: int, out: int):
+        n_layers = 4
+        super().__init__(in_, out // n_layers, n_layers,
+                         dropout=hps.dropout, bn=hps.bn)
+
+
+class DenseUNet(UNet):
+    module = DenseUNetModule
+
+
 class DownBlock(nn.Module):
     def __init__(self, in_, out, scale, *, dropout, bn):
         super().__init__()
