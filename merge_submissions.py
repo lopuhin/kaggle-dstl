@@ -22,8 +22,9 @@ def main():
         with opener(path, 'rt') as f:
             reader = csv.reader(f)
             next(reader)
-            all_data.update(
-                ((im_id, poly_type), poly) for im_id, poly_type, poly in reader)
+            for im_id, poly_type, poly in reader:
+                if poly != 'MULTIPOLYGON EMPTY':
+                    all_data[im_id, poly_type] = poly
 
     opener = gzip.open if args.output.endswith('.gz') else open
     with opener(str(args.output), 'wt') as outf:
