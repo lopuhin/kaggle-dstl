@@ -447,7 +447,6 @@ class Model:
                 if dist_ys.shape[0]:
                     cv2.imwrite(fname('{}-d'.format(cls)), dist_ys[i, j] * 255)
 
-
     def _log_value(self, name, value):
         self.tb_logger.log_value(name, value, step=self.net.global_step[0])
 
@@ -578,7 +577,7 @@ class Model:
                 pred_mask[:, x: x + s, y: y + s] += mask / n_rot
                 pred_per_pixel[:, x: x + s, y: y + s] += 1
         assert pred_per_pixel.min() >= 1
-        pred_mask /= pred_per_pixel
+        pred_mask /= np.maximum(pred_per_pixel, 1)
         return pred_mask
 
 
@@ -649,12 +648,24 @@ def main():
     if args.valid_only:
         train_ids = []
 
+    train_area_by_class, valid_area_by_class = [
+        {cls: np.mean(
+            [mask_stats[im_id][str(cls)]['area'] for im_id in im_ids])
+         for cls in hps.classes}
+        for im_ids in [train_ids, valid_ids]]
+
     logger.info('Train: {}'.format(' '.join(sorted(train_ids))))
     logger.info('Valid: {}'.format(' '.join(sorted(valid_ids))))
-    logger.info('Train area mean: {}'.format(
+    logger.info('Train area mean: {:.6f}'.format(
         np.mean([area_by_id[im_id] for im_id in valid_ids])))
-    logger.info('Valid area mean: {}'.format(
+    logger.info('Train area by class: {}'.format(
+        ' '.join('{}: {:.6f}'.format(cls, train_area_by_class[cls])
+                 for cls in hps.classes)))
+    logger.info('Valid area mean: {:.6f}'.format(
         np.mean([area_by_id[im_id] for im_id in train_ids])))
+    logger.info('Valid area by class: {}'.format(
+        ' '.join('cls-{}: {:.6f}'.format(cls, valid_area_by_class[cls])
+                 for cls in hps.classes)))
 
     model.train(logdir=logdir,
                 train_ids=train_ids,
