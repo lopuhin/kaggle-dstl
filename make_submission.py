@@ -65,11 +65,14 @@ def main():
     else:
         to_predict = set(image_ids) | set(train_ids)
     if not args.force_predict:
-        to_predict = [im_id for im_id in to_predict
-                      if not mask_path(store, im_id).exists()]
+        to_predict_masks = [
+            im_id for im_id in to_predict
+            if not mask_path(store, im_id).exists()]
+    else:
+        to_predict_masks = to_predict
 
-    if to_predict:
-        predict_masks(args, hps, store, to_predict, args.threshold,
+    if to_predict_masks:
+        predict_masks(args, hps, store, to_predict_masks, args.threshold,
                       validation=args.validation)
     if args.masks_only:
         logger.info('Was building masks only, done.')
