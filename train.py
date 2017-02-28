@@ -128,22 +128,25 @@ class Model:
         valid_images = None
         if model_path:
             self.restore_snapshot(model_path)
-            n_epoch = int(model_path.name.rsplit('-', 1)[1]) + 1
+            start_epoch = int(model_path.name.rsplit('-', 1)[1]) + 1
         else:
-            n_epoch = self.restore_last_snapshot(logdir)
+            start_epoch = self.restore_last_snapshot(logdir)
         square_validation = validation == 'square'
         lr = self.hps.lr
         self.optimizer = self._init_optimizer(lr)
-        for n_epoch in range(n_epoch, self.hps.n_epochs):
+        for n_epoch in range(start_epoch, self.hps.n_epochs):
             if self.hps.lr_decay:
-                if n_epoch % 2 == 0:
+                if n_epoch % 2 == 0 or n_epoch == start_epoch:
                     lr = self.hps.lr * self.hps.lr_decay ** n_epoch
                     self.optimizer = self._init_optimizer(lr)
             else:
-                if n_epoch == 25:
+                lim_1, lim_2 = 25, 50
+                if n_epoch == lim_1 or (
+                        n_epoch == start_epoch and n_epoch > lim_1):
                     lr = self.hps.lr / 5
                     self.optimizer = self._init_optimizer(lr)
-                elif n_epoch == 50:
+                elif n_epoch == lim_2 or (
+                        n_epoch == start_epoch and n_epoch > lim_2):
                     lr = self.hps.lr / 25
                     self.optimizer = self._init_optimizer(lr)
             logger.info('Starting epoch {}, step {:,}, lr {:.8f}'.format(
