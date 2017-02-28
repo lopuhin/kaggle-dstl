@@ -145,7 +145,7 @@ class Model:
                         n_epoch == start_epoch and n_epoch > lim_1):
                     lr = self.hps.lr / 5
                     self.optimizer = self._init_optimizer(lr)
-                elif n_epoch == lim_2 or (
+                if n_epoch == lim_2 or (
                         n_epoch == start_epoch and n_epoch > lim_2):
                     lr = self.hps.lr / 25
                     self.optimizer = self._init_optimizer(lr)
