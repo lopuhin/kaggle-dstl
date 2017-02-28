@@ -35,8 +35,9 @@ def main():
     arg('--model-path', type=Path,
         help='Path to a specific model (if the last is not desired)')
     arg('--processes', type=int, default=30)
-    arg('--debug', action='store_true',
-        help='only train images, check jaccard, save masks and polygons as png')
+    arg('--validation', choices=['square', 'custom'],
+        help='only validation images, check jaccard, '
+             'save masks and polygons as png')
     arg('--fix', nargs='+', help='{im_id}_{poly_type} format, e.g 6100_1_1_10')
     arg('--force-predict', action='store_true')
     args = parser.parse_args()
@@ -53,16 +54,23 @@ def main():
     store = args.logdir  # type: Path
 
     train_ids = set(utils.get_wkt_data())
-    to_predict = set(only or train_ids)
-    if not args.debug:
-        to_predict |= set(only or image_ids)
+    if only:
+        to_predict = only
+    elif args.validation:
+        if args.validation == 'custom':
+            to_predict = [
+                '6140_3_1', '6110_1_2', '6160_2_1', '6170_0_4', '6100_2_2']
+        else:
+            to_predict = set(train_ids)
+    else:
+        to_predict = set(image_ids) | set(train_ids)
     if not args.force_predict:
         to_predict = [im_id for im_id in to_predict
                       if not mask_path(store, im_id).exists()]
 
     if to_predict:
         predict_masks(args, hps, store, to_predict, args.threshold,
-                      debug=args.debug)
+                      validation=args.validation)
     if args.masks_only:
         logger.info('Was building masks only, done.')
         return
@@ -72,7 +80,7 @@ def main():
     with opener(args.output, 'wt') as f:
         writer = csv.writer(f)
         writer.writerow(header)
-        to_output = train_ids if args.debug else (only or image_ids)
+        to_output = to_predict if args.validation else (only or image_ids)
         jaccard_stats = [[] for _ in hps.classes]
         sizes = [0 for _ in hps.classes]
         with Pool(processes=args.processes) as pool:
@@ -83,7 +91,7 @@ def main():
                             epsilon=args.epsilon,
                             min_area=args.min_area,
                             min_small_area=args.min_small_area,
-                            debug=args.debug,
+                            validation=args.validation,
                             to_fix=to_fix,
                             hps=hps,
                             ),
@@ -94,7 +102,7 @@ def main():
                     cls_jss.append(cls_js)
                 for idx, (_, _, poly) in enumerate(rows):
                     sizes[idx] += len(poly)
-        if args.debug:
+        if args.validation:
             pixel_jaccards, poly_jaccards = [], []
             for cls, cls_js in zip(hps.classes, jaccard_stats):
                 pixel_jc, poly_jc = [np.array([0, 0, 0]) for _ in range(2)]
@@ -118,7 +126,7 @@ def mask_path(store: Path, im_id: str) -> Path:
 
 
 def predict_masks(args, hps, store, to_predict: List[str], threshold: float,
-                  debug: bool=False):
+                  validation: str=None):
     logger.info('Predicting {} masks: {}'
                 .format(len(to_predict), ', '.join(sorted(to_predict))))
     model = Model(hps=hps)
@@ -131,7 +139,7 @@ def predict_masks(args, hps, store, to_predict: List[str], threshold: float,
         data = model.preprocess_image(utils.load_image(im_id))
         if hps.n_channels != data.shape[0]:
             data = data[:hps.n_channels]
-        if debug:
+        if validation == 'square':
             data = square(data, hps)
         return Image(id=im_id, data=data)
 
@@ -156,7 +164,7 @@ def get_poly_data(im_id, *,
                   epsilon: float,
                   min_area: float,
                   min_small_area: float,
-                  debug: bool,
+                  validation: str,
                   to_fix: Set[str],
                   hps: HyperParams
                   ):
@@ -171,17 +179,19 @@ def get_poly_data(im_id, *,
             except Exception:
                 logger.error('Error loading mask {}'.format(path))
                 raise
-            if debug:
+            if validation == 'square':
                 masks = square(masks, hps)
         rows = []
-        if debug:
+        if validation:
             im_data = utils.load_image(im_id, rgb_only=True)
             im_size = im_data.shape[:2]
+            if validation == 'square':
+                im_data = square(im_data, hps)
             cv2.imwrite(str(store / '{}_image.png'.format(im_id)),
-                        255 * utils.scale_percentile(square(im_data, hps)))
+                        255 * utils.scale_percentile(im_data))
         for cls, mask in zip(classes, masks):
             poly_type = cls + 1
-            if train_polygons and not debug:
+            if train_polygons and not validation:
                 rows.append((im_id, str(poly_type), 'MULTIPOLYGON EMPTY'))
             else:
                 unscaled, pred_poly = get_polygons(
@@ -192,13 +202,15 @@ def get_poly_data(im_id, *,
                 rows.append(
                     (im_id, str(poly_type),
                      shapely.wkt.dumps(pred_poly, rounding_precision=8)))
-                if debug:
+                if validation:
                     poly_mask = utils.mask_for_polygons(mask.shape, unscaled)
                     train_poly = shapely.wkt.loads(train_polygons[poly_type])
                     scaled_train_poly = utils.scale_to_mask(
                         im_id, im_size, train_poly)
-                    true_mask = square(utils.mask_for_polygons(
-                        im_size, scaled_train_poly), hps)
+                    true_mask = utils.mask_for_polygons(
+                        im_size, scaled_train_poly)
+                    if validation == 'square':
+                        true_mask = square(true_mask, hps)
                     write_mask = lambda m, name: cv2.imwrite(
                         str(store / '{}_{}_{}.png'.format(im_id, cls, name)),
                         255 * m)
