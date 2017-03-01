@@ -535,7 +535,7 @@ class Model:
     def predict_image_mask(self, im_data: np.ndarray,
                            rotate: bool=False,
                            no_edges: bool=False,
-                           average_shifts: bool=False
+                           average_shifts: bool=True
                            ) -> np.ndarray:
         self.net.eval()
         c, w, h = im_data.shape
@@ -578,6 +578,7 @@ class Model:
                 i = idx % n_rot
                 if i:
                     mask = utils.rotated(mask, -i * 90)
+                # mask = (mask >= 0.5) + 0.001
                 pred_mask[:, x: x + s, y: y + s] += mask / n_rot
                 pred_per_pixel[:, x: x + s, y: y + s] += 1
         if not no_edges:
