@@ -40,6 +40,7 @@ def main():
              'save masks and polygons as png')
     arg('--fix', nargs='+', help='{im_id}_{poly_type} format, e.g 6100_1_1_10')
     arg('--force-predict', action='store_true')
+    arg('--no-edges', action='store_true', help='disable prediction on edges')
     args = parser.parse_args()
     to_fix = set(args.fix or [])
     hps = HyperParams(**json.loads(
@@ -73,7 +74,7 @@ def main():
 
     if to_predict_masks:
         predict_masks(args, hps, store, to_predict_masks, args.threshold,
-                      validation=args.validation)
+                      validation=args.validation, no_edges=args.no_edges)
     if args.masks_only:
         logger.info('Was building masks only, done.')
         return
@@ -129,7 +130,7 @@ def mask_path(store: Path, im_id: str) -> Path:
 
 
 def predict_masks(args, hps, store, to_predict: List[str], threshold: float,
-                  validation: str=None):
+                  validation: str=None, no_edges: bool=False):
     logger.info('Predicting {} masks: {}'
                 .format(len(to_predict), ', '.join(sorted(to_predict))))
     model = Model(hps=hps)
@@ -148,7 +149,7 @@ def predict_masks(args, hps, store, to_predict: List[str], threshold: float,
 
     def predict_mask(im):
         logger.info(im.id)
-        return im, model.predict_image_mask(im.data)
+        return im, model.predict_image_mask(im.data, no_edges=no_edges)
 
     im_masks = map(predict_mask, utils.imap_fixed_output_buffer(
         load_im, sorted(to_predict), threads=2))

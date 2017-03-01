@@ -533,7 +533,10 @@ class Model:
         return logdir.joinpath('model-{}'.format(n_epoch))
 
     def predict_image_mask(self, im_data: np.ndarray,
-                           rotate: bool=False) -> np.ndarray:
+                           rotate: bool=False,
+                           no_edges: bool=False,
+                           average_shifts: bool=False
+                           ) -> np.ndarray:
         self.net.eval()
         c, w, h = im_data.shape
         b = self.hps.patch_border
@@ -545,28 +548,29 @@ class Model:
         padded[:, -b:, b:-b] = np.flip(im_data[:, -b:, :], 1)
         padded[:, :, :b] = np.flip(padded[:, :, b: 2 * b], 2)
         padded[:, :, -b:] = np.flip(padded[:, :, -2 * b: -b], 2)
-        step = s  # TODO: // 3
-        xs = list(range(0, w - s, step)) + [w - s]
-        ys = list(range(0, h - s, step)) + [h - s]
+        step = s // 3 if average_shifts else s
+        margin = b if no_edges else 0
+        xs = list(range(margin, w - s - margin, step)) + [w - s - margin]
+        ys = list(range(margin, h - s - margin, step)) + [h - s - margin]
         all_xy = [(x, y) for x in xs for y in ys]
         out_shape = [self.hps.n_classes, w, h]
         pred_mask = np.zeros(out_shape, dtype=np.float32)
         pred_per_pixel = np.zeros(out_shape, dtype=np.int16)
         n_rot = 4 if rotate else 1
 
-        def gen_batch(xy_batch):
-            inputs = []
-            for x, y in xy_batch:
+        def gen_batch(xy_batch_):
+            inputs_ = []
+            for x, y in xy_batch_:
                 # shifted by -b to account for padding
                 patch = padded[:, x: x + s + 2 * b, y: y + s + 2 * b]
-                inputs.append(patch)
+                inputs_.append(patch)
                 for i in range(1, n_rot):
-                    inputs.append(utils.rotated(patch, i * 90))
-            return xy_batch, np.array(inputs, dtype=np.float32)
+                    inputs_.append(utils.rotated(patch, i * 90))
+            return xy_batch_, np.array(inputs_, dtype=np.float32)
 
         for xy_batch, inputs in utils.imap_fixed_output_buffer(
                 gen_batch, tqdm.tqdm(list(
-                    utils.chunks(all_xy, self.hps.batch_size // (2 * n_rot)))),
+                    utils.chunks(all_xy, self.hps.batch_size // (4 * n_rot)))),
                 threads=2):
             y_pred = self.net(self._var(torch.from_numpy(inputs)))
             for idx, mask in enumerate(y_pred.data.cpu().numpy()):
@@ -576,7 +580,8 @@ class Model:
                     mask = utils.rotated(mask, -i * 90)
                 pred_mask[:, x: x + s, y: y + s] += mask / n_rot
                 pred_per_pixel[:, x: x + s, y: y + s] += 1
-        assert pred_per_pixel.min() >= 1
+        if not no_edges:
+            assert pred_per_pixel.min() >= 1
         pred_mask /= np.maximum(pred_per_pixel, 1)
         return pred_mask
 
