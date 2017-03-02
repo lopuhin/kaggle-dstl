@@ -28,7 +28,6 @@ class HyperParams:
 
     dropout = attr.ib(default=0.0)
     bn = attr.ib(default=1)
-    bn_after = attr.ib(default=0)
     activation = attr.ib(default='relu')
     top_scale = attr.ib(default=2)
     log_loss = attr.ib(default=1.0)
@@ -184,7 +183,6 @@ class UNetModule(nn.Module):
         self.conv1 = conv3x3(in_, out)
         self.conv2 = conv3x3(out, out)
         self.bn = hps.bn
-        self.bn_after = hps.bn_after
         self.activation = getattr(F, hps.activation)
         if self.bn:
             self.bn1 = nn.BatchNorm2d(out)
@@ -192,17 +190,13 @@ class UNetModule(nn.Module):
 
     def forward(self, x):
         x = self.conv1(x)
-        if self.bn and not self.bn_after:
+        if self.bn:
             x = self.bn1(x)
         x = self.activation(x)
-        if self.bn and self.bn_after:
-            x = self.bn1(x)
         x = self.conv2(x)
-        if self.bn and not self.bn_after:
+        if self.bn:
             x = self.bn2(x)
         x = self.activation(x)
-        if self.bn and self.bn_after:
-            x = self.bn1(x)
         return x
 
 
