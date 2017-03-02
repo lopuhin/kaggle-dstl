@@ -6,12 +6,14 @@ import gzip
 from functools import partial
 from pathlib import Path
 from multiprocessing.pool import Pool
+import traceback
 from typing import List, Tuple, Set
 
 import cv2
 import numpy as np
 import shapely.affinity
 from shapely.geometry import MultiPolygon
+from shapely.geos import TopologicalError
 import shapely.wkt
 
 import utils
@@ -38,6 +40,7 @@ def main():
     arg('--validation', choices=['square', 'custom'],
         help='only validation images, check jaccard, '
              'save masks and polygons as png')
+    arg('--valid-polygons', action='store_true', help='validation via polygons')
     arg('--fix', nargs='+', help='{im_id}_{poly_type} format, e.g 6100_1_1_10')
     arg('--force-predict', action='store_true')
     arg('--no-edges', action='store_true', help='disable prediction on edges')
@@ -98,6 +101,7 @@ def main():
                             validation=args.validation,
                             to_fix=to_fix,
                             hps=hps,
+                            valid_polygons=args.valid_polygons
                             ),
                     to_output):
                 assert len(rows) == hps.n_classes
@@ -170,7 +174,8 @@ def get_poly_data(im_id, *,
                   min_small_area: float,
                   validation: str,
                   to_fix: Set[str],
-                  hps: HyperParams
+                  hps: HyperParams,
+                  valid_polygons: bool
                   ):
     train_polygons = utils.get_wkt_data().get(im_id)
     jaccard_stats = []
@@ -222,7 +227,9 @@ def get_poly_data(im_id, *,
                     write_mask(mask, 'pixel_mask')
                     write_mask(poly_mask, 'poly_mask')
                     jaccard_stats.append(
-                        log_jaccard(true_mask, mask, poly_mask))
+                        log_jaccard(true_mask, mask, poly_mask,
+                                    scaled_train_poly, unscaled,
+                                    valid_polygons=valid_polygons))
     else:
         logger.info('{} empty'.format(im_id))
         rows = [(im_id, str(cls + 1), 'MULTIPOLYGON EMPTY') for cls in classes]
@@ -250,10 +257,24 @@ def square(x, hps):
         return x[:, :hps.validation_square, :hps.validation_square]
 
 
-def log_jaccard(true_mask, mask, poly_mask):
+def log_jaccard(true_mask: np.ndarray, mask: np.ndarray, poly_mask: np.ndarray,
+                true_poly: MultiPolygon, poly: MultiPolygon,
+                valid_polygons=False):
     assert len(mask.shape) == 2
     pixel_jc = utils.mask_tp_fp_fn(mask, true_mask, 0.5)
-    poly_jc = utils.mask_tp_fp_fn(poly_mask, true_mask, 0.5)
+    if valid_polygons:
+        try:
+            tp = true_poly.intersection(poly).area
+            fn = true_poly.difference(poly).area
+            fp = poly.difference(true_poly).area
+        except TopologicalError:  # FIXME - wtf???
+            traceback.print_exc()
+            tp = 0
+            fn = true_poly.area
+            fp = poly.area
+        poly_jc = tp, fp, fn
+    else:
+        poly_jc = utils.mask_tp_fp_fn(poly_mask, true_mask, 0.5)
     logger.info('pixel jaccard: {:.5f}, polygon jaccard: {:.5f}'
                 .format(jaccard(pixel_jc), jaccard(poly_jc)))
     return pixel_jc, poly_jc
