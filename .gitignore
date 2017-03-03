@@ -8,3 +8,4 @@ three_band/
 sixteen_band/
 train_geojson_v3/
 train_wkt_v4.csv
+*.csv.gz
