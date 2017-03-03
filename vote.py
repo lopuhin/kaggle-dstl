@@ -1,5 +1,4 @@
-import os
-
+#!/usr/bin/env python3
 import pandas as pd
 import shapely.wkt
 from shapely.ops import unary_union
@@ -10,12 +9,12 @@ sample_submission = pd.read_csv('sample_submission.csv')
 
 
 subm_names = [
-    'unet-topscale-4-rot25-channels-12-dice-10-cls-8-9-all-eps-1-cls-9',
-    'unet-fullaug-square-dice-10-bn-eps-2-cls-9',
-    'unet-topscale-4-rot10-channels-12-dice-10-cls-8-9-stratified-eps1-cls-9',
+    'unet-topscale-4-rot10-channels-12-dice-10-cls-8-9-model-53-eps-1-cls-8',
+    'unet-fullaug-square-dice-10-bn-eps-2-cls-8-9',
+    'unet-topscale-4-rot25-channels-12-dice-10-cls-8-9-all-eps-1',
 ]
 
-classes = [10]
+classes = [9]
 
 buffer_size = 1e-7
 
