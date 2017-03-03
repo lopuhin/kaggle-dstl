@@ -34,6 +34,8 @@ class HyperParams:
     dice_loss = attr.ib(default=0.0)
     jaccard_loss = attr.ib(default=0.0)
     dist_loss = attr.ib(default=0.0)
+    dist_dice_loss = attr.ib(default=0.0)
+    dist_jaccard_loss = attr.ib(default=0.0)
 
     filters_base = attr.ib(default=32)
 
@@ -51,6 +53,11 @@ class HyperParams:
     @property
     def has_all_classes(self):
         return self.n_classes == self.total_classes
+
+    @property
+    def needs_dist(self):
+        return (self.dist_loss != 0 or self.dist_dice_loss != 0 or
+                self.dist_jaccard_loss != 0)
 
     @classmethod
     def from_dir(cls, root: Path):

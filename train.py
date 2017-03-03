@@ -90,11 +90,11 @@ class Model:
                y_preds: Variable):
         losses = []
         ys = self._var(ys)
-        if self.hps.dist_loss:
+        if self.hps.needs_dist:
             ys_dist = self._var(ys_dist)
         for cls_idx, _ in enumerate(self.hps.classes):
             y, y_pred = ys[:, cls_idx], y_preds[:, cls_idx]
-            y_dist = ys_dist[:, cls_idx] if self.hps.dist_loss else None
+            y_dist = ys_dist[:, cls_idx] if self.hps.needs_dist else None
             loss = self._cls_loss(y, y_dist, y_pred)
             losses.append(loss)
         return losses
@@ -116,7 +116,18 @@ class Model:
                 loss += (1 - intersection / union) * hps.jaccard_loss
         if hps.dist_loss:
             loss += self.mse_loss(y_pred, y_dist) * hps.dist_loss
-        loss /= hps.log_loss + hps.dist_loss + hps.dice_loss + hps.jaccard_loss
+        if hps.dist_dice_loss:
+            intersection = (y_pred * y_dist).sum()
+            uwi = y_pred.sum() + y_dist.sum()  # without intersection union
+            if uwi[0] != 0:
+                loss += (1 - intersection / uwi) * hps.dist_dice_loss
+        if hps.dist_jaccard_loss:
+            intersection = (y_pred * y_dist).sum()
+            union = y_pred.sum() + y_dist.sum() - intersection
+            if union[0] != 0:
+                loss += (1 - intersection / union) * hps.dist_jaccard_loss
+        loss /= (hps.log_loss + hps.dist_loss + hps.dist_jaccard_loss +
+                 hps.dist_dice_loss + hps.dice_loss + hps.jaccard_loss)
         return loss
 
     def train(self, logdir: Path, train_ids: List[str], valid_ids: List[str],
@@ -250,19 +261,19 @@ class Model:
                             train_images, square_validation)
                 patch = im.data[:, x - mb: x + s + mb, y - mb: y + s + mb]
                 mask = im.mask[:, x - m: x + s + m, y - m: y + s + m]
-                if self.hps.dist_loss:
+                if self.hps.needs_dist:
                     dist_mask = im.dist_mask[:, x - m: x + s + m, y - m: y + s + m]
 
                 if self.hps.augment_flips:
                     if random.random() < 0.5:
                         patch = np.flip(patch, 1)
                         mask = np.flip(mask, 1)
-                        if self.hps.dist_loss:
+                        if self.hps.needs_dist:
                             dist_mask = np.flip(dist_mask, 1)
                     if random.random() < 0.5:
                         patch = np.flip(patch, 2)
                         mask = np.flip(mask, 2)
-                        if self.hps.dist_loss:
+                        if self.hps.needs_dist:
                             dist_mask = np.flip(dist_mask, 2)
 
                 if self.hps.augment_rotations:
@@ -270,7 +281,7 @@ class Model:
                     angle = (2 * random.random() - 1.) * self.hps.augment_rotations
                     patch = utils.rotated(patch, angle)
                     mask = utils.rotated(mask, angle)
-                    if self.hps.dist_loss:
+                    if self.hps.needs_dist:
                         dist_mask = utils.rotated(dist_mask, angle)
 
                 if self.hps.augment_channels:
@@ -280,7 +291,7 @@ class Model:
 
                 inputs.append(patch[:, m: -m, m: -m].astype(np.float32))
                 outputs.append(mask[:, m: -m, m: -m].astype(np.float32))
-                if self.hps.dist_loss:
+                if self.hps.needs_dist:
                     dist_outputs.append(
                         dist_mask[:, m: -m, m: -m].astype(np.float32))
 
@@ -472,7 +483,7 @@ class Model:
                 outputs = np.array(
                     [im.mask[:, x: x + s, y: y + s] for x, y in xy_batch])
                 outputs = outputs.astype(np.float32)
-                if self.hps.dist_loss:
+                if self.hps.needs_dist:
                     dist_outputs = np.array([im.dist_mask[:, x: x + s, y: y + s]
                                              for x, y in xy_batch])
                     dist_outputs = dist_outputs.astype(np.float32)
