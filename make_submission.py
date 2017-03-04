@@ -115,7 +115,8 @@ def main():
         if args.validation:
             pixel_jaccards, poly_jaccards = [], []
             for cls, cls_js in zip(hps.classes, jaccard_stats):
-                pixel_jc, poly_jc = [np.array([0, 0, 0]) for _ in range(2)]
+                pixel_jc, poly_jc = [np.array([0, 0, 0], dtype=np.float32)
+                                     for _ in range(2)]
                 for _pixel_jc, _poly_jc in cls_js:
                     pixel_jc += _pixel_jc
                     poly_jc += _poly_jc
@@ -194,7 +195,6 @@ def get_poly_data(im_id, *,
             if validation == 'square':
                 masks = square(masks, hps)
         rows = []
-        im_size = masks.shape[1:]
         if validation:
             im_data = utils.load_image(im_id, rgb_only=True)
             im_size = im_data.shape[:2]
@@ -233,7 +233,7 @@ def get_poly_data(im_id, *,
                     write_mask(mask, 'pixel_mask')
                     write_mask(poly_mask, 'poly_mask')
                     jaccard_stats.append(
-                        log_jaccard(im_id, true_mask, mask, poly_mask,
+                        log_jaccard(im_id, cls, true_mask, mask, poly_mask,
                                     scaled_train_poly, unscaled,
                                     valid_polygons=valid_polygons))
     else:
@@ -263,7 +263,7 @@ def square(x, hps):
         return x[:, :hps.validation_square, :hps.validation_square]
 
 
-def log_jaccard(im_id: str,
+def log_jaccard(im_id: str, cls: int,
                 true_mask: np.ndarray, mask: np.ndarray, poly_mask: np.ndarray,
                 true_poly: MultiPolygon, poly: MultiPolygon,
                 valid_polygons=False):
@@ -278,8 +278,8 @@ def log_jaccard(im_id: str,
         poly_jc = tp, fp, fn
     else:
         poly_jc = utils.mask_tp_fp_fn(poly_mask, true_mask, 0.5)
-    logger.info('{} pixel jaccard: {:.5f}, polygon jaccard: {:.5f}'
-                .format(im_id, jaccard(pixel_jc), jaccard(poly_jc)))
+    logger.info('{} cls-{} pixel jaccard: {:.5f}, polygon jaccard: {:.5f}'
+                .format(im_id, cls, jaccard(pixel_jc), jaccard(poly_jc)))
     return pixel_jc, poly_jc
 
 
