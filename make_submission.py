@@ -44,6 +44,7 @@ def main():
     arg('--fix', nargs='+', help='{im_id}_{poly_type} format, e.g 6100_1_1_10')
     arg('--force-predict', action='store_true')
     arg('--no-edges', action='store_true', help='disable prediction on edges')
+    arg('--buffer', type=float, help='do .buffer(x) on pred polygons')
     args = parser.parse_args()
     to_fix = set(args.fix or [])
     hps = HyperParams(**json.loads(
@@ -101,7 +102,8 @@ def main():
                             validation=args.validation,
                             to_fix=to_fix,
                             hps=hps,
-                            valid_polygons=args.valid_polygons
+                            valid_polygons=args.valid_polygons,
+                            buffer=args.buffer,
                             ),
                     to_output):
                 assert len(rows) == hps.n_classes
@@ -175,7 +177,8 @@ def get_poly_data(im_id, *,
                   validation: str,
                   to_fix: Set[str],
                   hps: HyperParams,
-                  valid_polygons: bool
+                  valid_polygons: bool,
+                  buffer: float
                   ):
     train_polygons = utils.get_wkt_data().get(im_id)
     jaccard_stats = []
@@ -191,6 +194,7 @@ def get_poly_data(im_id, *,
             if validation == 'square':
                 masks = square(masks, hps)
         rows = []
+        im_size = masks.shape[1:]
         if validation:
             im_data = utils.load_image(im_id, rgb_only=True)
             im_size = im_data.shape[:2]
@@ -208,6 +212,8 @@ def get_poly_data(im_id, *,
                     min_area=min_small_area if cls in {1, 8, 9} else min_area,
                     fix='{}_{}'.format(im_id, poly_type) in to_fix,
                 )
+                if buffer:
+                    pred_poly = pred_poly.buffer(buffer)
                 rows.append(
                     (im_id, str(poly_type),
                      shapely.wkt.dumps(pred_poly, rounding_precision=8)))
@@ -227,7 +233,7 @@ def get_poly_data(im_id, *,
                     write_mask(mask, 'pixel_mask')
                     write_mask(poly_mask, 'poly_mask')
                     jaccard_stats.append(
-                        log_jaccard(true_mask, mask, poly_mask,
+                        log_jaccard(im_id, true_mask, mask, poly_mask,
                                     scaled_train_poly, unscaled,
                                     valid_polygons=valid_polygons))
     else:
@@ -257,26 +263,23 @@ def square(x, hps):
         return x[:, :hps.validation_square, :hps.validation_square]
 
 
-def log_jaccard(true_mask: np.ndarray, mask: np.ndarray, poly_mask: np.ndarray,
+def log_jaccard(im_id: str,
+                true_mask: np.ndarray, mask: np.ndarray, poly_mask: np.ndarray,
                 true_poly: MultiPolygon, poly: MultiPolygon,
                 valid_polygons=False):
     assert len(mask.shape) == 2
     pixel_jc = utils.mask_tp_fp_fn(mask, true_mask, 0.5)
     if valid_polygons:
-        try:
-            tp = true_poly.intersection(poly).area
-            fn = true_poly.difference(poly).area
-            fp = poly.difference(true_poly).area
-        except TopologicalError:  # FIXME - wtf???
-            traceback.print_exc()
-            tp = 0
-            fn = true_poly.area
-            fp = poly.area
+        if not true_poly.is_valid:
+            true_poly = true_poly.buffer(0)
+        tp = true_poly.intersection(poly).area
+        fn = true_poly.difference(poly).area
+        fp = poly.difference(true_poly).area
         poly_jc = tp, fp, fn
     else:
         poly_jc = utils.mask_tp_fp_fn(poly_mask, true_mask, 0.5)
-    logger.info('pixel jaccard: {:.5f}, polygon jaccard: {:.5f}'
-                .format(jaccard(pixel_jc), jaccard(poly_jc)))
+    logger.info('{} pixel jaccard: {:.5f}, polygon jaccard: {:.5f}'
+                .format(im_id, jaccard(pixel_jc), jaccard(poly_jc)))
     return pixel_jc, poly_jc
 
 
