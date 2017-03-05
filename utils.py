@@ -245,6 +245,12 @@ def mask_to_polygons(mask: np.ndarray, epsilon=5., min_area=10.,
     return all_polygons
 
 
+def to_multipolygon(poly):
+    # Sometimes buffer() converts a simple Multipolygon to just a Polygon,
+    # need to keep it a Multi throughout
+    return MultiPolygon([poly]) if poly.type == 'Polygon' else poly
+
+
 def mask_tp_fp_fn(pred_mask: np.ndarray, true_mask: np.ndarray,
                   threshold: float) -> Tuple[int, int, int]:
     pred_mask = pred_mask >= threshold

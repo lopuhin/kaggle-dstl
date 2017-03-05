@@ -13,7 +13,6 @@ import cv2
 import numpy as np
 import shapely.affinity
 from shapely.geometry import MultiPolygon
-from shapely.geos import TopologicalError
 import shapely.wkt
 
 import utils
@@ -211,9 +210,8 @@ def get_poly_data(im_id, *,
                     im_id, mask, epsilon,
                     min_area=min_small_area if cls in {1, 8, 9} else min_area,
                     fix='{}_{}'.format(im_id, poly_type) in to_fix,
+                    buffer=buffer,
                 )
-                if buffer:
-                    pred_poly = pred_poly.buffer(buffer)
                 rows.append(
                     (im_id, str(poly_type),
                      shapely.wkt.dumps(pred_poly, rounding_precision=8)))
@@ -243,11 +241,13 @@ def get_poly_data(im_id, *,
 
 
 def get_polygons(im_id: str, mask: np.ndarray,
-                 epsilon: float, min_area: float, fix: bool
+                 epsilon: float, min_area: float, fix: bool, buffer: float
                  ) -> Tuple[MultiPolygon, MultiPolygon]:
     assert len(mask.shape) == 2
     polygons = utils.mask_to_polygons(
         mask, epsilon=epsilon, min_area=min_area, fix=fix)
+    if buffer:
+        polygons = utils.to_multipolygon(polygons.buffer(buffer))
     x_scaler, y_scaler = utils.get_scalers(im_id, im_size=mask.shape)
     x_scaler = 1 / x_scaler
     y_scaler = 1 / y_scaler
@@ -271,7 +271,9 @@ def log_jaccard(im_id: str, cls: int,
     pixel_jc = utils.mask_tp_fp_fn(mask, true_mask, 0.5)
     if valid_polygons:
         if not true_poly.is_valid:
-            true_poly = true_poly.buffer(0)
+            true_poly = utils.to_multipolygon(true_poly.buffer(0))
+        if not poly.is_valid:
+            poly = utils.to_multipolygon(poly.buffer(0))
         tp = true_poly.intersection(poly).area
         fn = true_poly.difference(poly).area
         fp = poly.difference(true_poly).area
