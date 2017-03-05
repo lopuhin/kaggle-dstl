@@ -235,11 +235,7 @@ def mask_to_polygons(mask: np.ndarray, epsilon=5., min_area=10.,
     if fix:
         all_polygons = all_polygons.buffer(-1)
     while not all_polygons.is_valid:
-        all_polygons = all_polygons.buffer(0)
-        # Sometimes buffer() converts a simple Multipolygon to just a Polygon,
-        # need to keep it a Multi throughout
-        if all_polygons.type == 'Polygon':
-            all_polygons = MultiPolygon([all_polygons])
+        all_polygons = to_multipolygon(all_polygons.buffer(0))
         all_polygons = shapely.wkt.loads(
             shapely.wkt.dumps(all_polygons, rounding_precision=8))
     return all_polygons

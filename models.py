@@ -16,6 +16,7 @@ class HyperParams:
     n_channels = attr.ib(default=12)  # max 20
     total_classes = 10
     thresholds = attr.ib(default=[0.5])
+    pre_buffer = attr.ib(default=0.0)
 
     patch_inner = attr.ib(default=64)
     patch_border = attr.ib(default=16)
