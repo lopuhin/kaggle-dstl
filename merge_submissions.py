@@ -22,9 +22,15 @@ def main():
         with opener(path, 'rt') as f:
             reader = csv.reader(f)
             next(reader)
+            overwritten = set()
             for im_id, poly_type, poly in reader:
-                if poly != 'MULTIPOLYGON EMPTY':
-                    all_data[im_id, poly_type] = poly
+                if poly not in {'MULTIPOLYGON EMPTY', 'GEOMETRYCOLLECTION EMPTY'}:
+                    key = im_id, poly_type
+                    if key in all_data:
+                        overwritten.add(poly_type)
+                    all_data[key] = poly
+            if overwritten:
+                print('Overwritten', overwritten)
 
     opener = gzip.open if args.output.endswith('.gz') else open
     with opener(str(args.output), 'wt') as outf:
