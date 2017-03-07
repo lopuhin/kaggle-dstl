@@ -229,7 +229,8 @@ def mask_to_polygons(mask: np.ndarray, epsilon=5., min_area=10.,
                        if cv2.contourArea(c) >= min_area])
             all_polygons.append(poly)
 
-    all_polygons = MultiPolygon(all_polygons)
+    all_polygons = to_multipolygon(MultiPolygon(all_polygons).buffer(0))
+    return all_polygons
     if fix:
         all_polygons = all_polygons.buffer(-1e-7)
         all_polygons = all_polygons.buffer(-1e-7)
