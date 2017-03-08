@@ -25,14 +25,27 @@ Note that labels here are 1 less than in submission file:
 General approach
 ----------------
 
-UNet network with batch-normalization added, traing with Adam optimizer with
+UNet network with batch-normalization added, training with Adam optimizer with
 a loss that is a sum of 0.1 cross-entropy and 0.9 dice loss.
-Augmentations used: small rotations for some classes
-(± 10-25 degrees for 0, 1, 8, 9), full rotations and vertical/horizontal flips
-for other classes. Small amount of dropout (0.1) used in some cases.
 Input for UNet was a 116 by 116 pixel patch, output was 64 by 64 pixels,
 so there were 16 additional pixels on each side that just provided context for
-the prediction. Alignment between channels was fixed with the help of
+the prediction.
+Batch size was 128, learning rate was set to 0.0001
+(but loss was multiplied by the batch size).
+Learning rate was divided by 5 on the 25-th epoch
+and then again by 5 on the 50-th epoch,
+most models were trained for 70-100 epochs.
+Patches that formed a batch were selected completely randomly across all images.
+During one epoch, network saw patches that covered about one half
+of the whole training set area. Best results for individual classes
+were achieved when training on related classes, for example buildings
+and structures, roads and tracks, two kinds of vehicles.
+
+Augmentations included small rotations for some classes
+(±10-25 degrees for houses, structures and both vehicle classes),
+full rotations and vertical/horizontal flips
+for other classes. Small amount of dropout (0.1) was used in some cases.
+Alignment between channels was fixed with the help of
 ``cv2.findTransformECC``, and lower-resolution layers were upscaled to
 match RGB size. In most cases, 12 channels were used (RGB, P, M),
 while in some cases just RGB and P or all 20 channels made results
@@ -54,13 +67,37 @@ Some details
 
 * This setup provides good results for small-scale classes
   (houses, structures, small vehicles), reasonable
-  results for most other classes and overfits quite badly on slow water.
+  results for most other classes and overfits quite badly on waterway.
 * Man-made structures performed significantly better if training polygons
   were made bigger by 0.5 pixel before producing training masks.
-* Averaging of predictions with small shifts (1/3 of the 64 pixel step) were used
+* For some classes (e.g. vehicles), it helped a bit to make the first
+  downscaling in UNet 4x instead of default 2x,
+  and also made training 1.5x faster.
+* Averaging of predictions (of one model)
+  with small shifts (1/3 of the 64 pixel step) were used
   for some classes.
 * Predictions on the edges of the input image (closer than 16 pixels to the
   border) were bad for some classes and were left empty in this case.
+* All models were implemented in pytorch, training for 70 epochs took about
+  5 hours, submission generation took about 30 minutes without averaging,
+  or about 5 hours with averaging.
+
+
+Other things tried
+------------------
+
+A lot of things that either did not bring noticeable improvements,
+or made things worse:
+
+* Losses: jaccard instead of dice, trying to predict distance to the border
+  of the objects.
+* Color augmentations.
+* Oversampling of rare classes.
+* Passing lower-resolution channels directly to lower-resolution layers in UNet.
+* Varying UNet filter sizes, activations, number of layers and upscale/downscale
+  steps, using deconvolutions instead of upsampling.
+* Learning rate decay.
+* Models: VGG-like modules for UNet, SegNet, DenseNet
 
 
 Object types stats
