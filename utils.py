@@ -230,10 +230,11 @@ def mask_to_polygons(mask: np.ndarray, epsilon=5., min_area=10.,
             all_polygons.append(poly)
 
     all_polygons = to_multipolygon(MultiPolygon(all_polygons).buffer(0))
-    return all_polygons
+    # return all_polygons - this was used to generate the final merges
     if fix:
         all_polygons = all_polygons.buffer(-1e-7)
         all_polygons = all_polygons.buffer(-1e-7)
+    # FIXME - a great idea, but should be done after conversion to final coordinates
     all_polygons = shapely.wkt.loads(
         shapely.wkt.dumps(all_polygons, rounding_precision=8))
     while not all_polygons.is_valid:
