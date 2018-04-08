@@ -3,6 +3,8 @@ DSTL
 
 https://www.kaggle.com/c/dstl-satellite-imagery-feature-detection/
 
+Note: this repo is not supported. License is MIT.
+
 .. contents::
 
 Object types
